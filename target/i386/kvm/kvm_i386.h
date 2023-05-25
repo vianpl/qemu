@@ -79,5 +79,6 @@ bool kvm_filter_msr(KVMState *s, uint32_t msr, QEMURDMSRHandler *rdmsr,
 #endif /* CONFIG_KVM */
 
 void kvm_pc_setup_irq_routing(bool pci_enabled);
+int kvm_put_one_msr_vtl(X86CPU *cpu, int index, uint64_t value, int vtl);
 
 #endif

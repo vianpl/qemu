@@ -54,12 +54,14 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
 {
     CPUX86State *env = &cpu->env;
 
+    fprintf(stderr, "kvm_hv_handle_exit: 0x%x\n", exit->type);
     switch (exit->type) {
     case KVM_EXIT_HYPERV_SYNIC:
         if (!hyperv_feat_enabled(cpu, HYPERV_FEAT_SYNIC)) {
             return -1;
         }
 
+        fprintf(stderr, "kvm_hv_handle_exit synic msr: %d\n", exit->u.synic.msr);
         switch (exit->u.synic.msr) {
         case HV_X64_MSR_SCONTROL:
             env->msr_hv_synic_control = exit->u.synic.control;
@@ -88,6 +90,7 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
         uint64_t in_param = exit->u.hcall.params[0];
         uint64_t out_param = exit->u.hcall.params[1];
 
+        fprintf(stderr, "kvm_hv_handle_exit: hvcall 0x%x\n", code);
         switch (code) {
         case HV_POST_MESSAGE:
             exit->u.hcall.result = hyperv_hcall_post_message(in_param, fast);
@@ -145,6 +148,12 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
         }
 
         return 0;
+
+    case KVM_EXIT_HYPERV_OVERLAY:
+      fprintf(stderr, "kvm_hv_handle_exit: overlay msr 0x%x, vtl %d, gpa 0x%llx\n",
+              exit->u.overlay.msr, exit->u.overlay.vtl, exit->u.overlay.gpa);
+      return 0;
+
     default:
         return -1;
     }

@@ -46,6 +46,10 @@
  */
 #define HV_POST_MESSAGES             (1u << 4)
 #define HV_SIGNAL_EVENTS             (1u << 5)
+#define HV_ACCESS_VSM                (1u << 16)
+#define HV_ACCESS_VP_REGS            (1u << 17)
+#define HV_ENABLE_EXT_HCALL          (1u << 20)
+#define HV_START_VP                  (1u << 21)
 
 /*
  * HV_CPUID_FEATURES.EDX bits
@@ -60,12 +64,16 @@
 #define HV_GUEST_CRASH_MSR_AVAILABLE            (1u << 10)
 #define HV_FEATURE_DEBUG_MSRS_AVAILABLE         (1u << 11)
 #define HV_EXT_GVA_RANGES_FLUSH_AVAILABLE       (1u << 14)
+#define HV_HYPERCALL_XMM_OUPUT_AVAILABLE        (1u << 15)
 #define HV_STIMER_DIRECT_MODE_AVAILABLE         (1u << 19)
 
 /*
  * HV_CPUID_FEATURES.EBX bits
  */
 #define HV_PARTITION_DEBUGGING_ALLOWED          (1u << 12)
+#define HV_ACCESS_VSM                          (1u << 16)
+#define HV_ACCESS_VP_REGISTERS                 (1u << 17)
+#define HV_START_VIRTUAL_PROCESSOR             (1u << 21)
 
 /*
  * HV_CPUID_ENLIGHTMENT_INFO.EAX bits
@@ -200,6 +208,8 @@
 #define HV_SINT_VECTOR_MASK                   0xff
 
 #define HV_STIMER_COUNT                       4
+
+#define HV_VTL_COUNT                          2
 
 /*
  * Synthetic debugger control definitions
