@@ -1033,6 +1033,22 @@ static struct {
         },
         .dependencies = BIT(HYPERV_FEAT_VAPIC)
     },
+    [HYPERV_FEAT_XMM_OUTPUT] = {
+        .desc = "XMM fast hypercall output (hv-xmm-output)",
+        .flags = {
+            {.func = HV_CPUID_FEATURES, .reg = R_EDX,
+             .bits = HV_HYPERCALL_XMM_OUPUT_AVAILABLE}
+        },
+        .dependencies = BIT(HYPERV_FEAT_XMM_INPUT)
+    },
+    [HYPERV_FEAT_VSM] = {
+       .desc = "VSM support",
+       .flags = {
+           {.func = HV_CPUID_FEATURES, .reg = R_EBX,
+            .bits = HV_ACCESS_VSM | HV_ACCESS_VP_REGISTERS | HV_START_VIRTUAL_PROCESSOR},
+       },
+       .dependencies = BIT(HYPERV_FEAT_SYNIC)
+    },
 };
 
 static struct kvm_cpuid2 *try_get_hv_cpuid(CPUState *cs, int max,
@@ -1694,6 +1710,14 @@ static int hyperv_init_vcpu(X86CPU *cpu)
         if (ret < 0) {
             error_report("failed to enable KVM_CAP_HYPERV_ENFORCE_CPUID: %s",
                          strerror(-ret));
+            return ret;
+        }
+    }
+
+    if (hyperv_feat_enabled(cpu, HYPERV_FEAT_VSM)) {
+        ret = kvm_vm_enable_cap(cs->kvm_state, KVM_CAP_HYPERV_VSM, 0, true);
+        if (ret < 0) {
+            error_report("kvm: Failed to enable VSM cap: %s", strerror(-ret));
             return ret;
         }
     }
@@ -3053,12 +3077,20 @@ static void kvm_msr_entry_add(X86CPU *cpu, uint32_t index, uint64_t value)
     msrs->nmsrs++;
 }
 
-static int kvm_put_one_msr(X86CPU *cpu, int index, uint64_t value)
+int kvm_put_one_msr_vtl(X86CPU *cpu, int index, uint64_t value, int vtl)
 {
+    struct kvm_msrs *msrs = cpu->kvm_msr_buf;
+
     kvm_msr_buf_reset(cpu);
     kvm_msr_entry_add(cpu, index, value);
+    msrs->vtl = vtl;
 
     return kvm_vcpu_ioctl(CPU(cpu), KVM_SET_MSRS, cpu->kvm_msr_buf);
+}
+
+static int kvm_put_one_msr(X86CPU *cpu, int index, uint64_t value)
+{
+    return kvm_put_one_msr_vtl(cpu, index, value, 0);
 }
 
 static int kvm_get_one_msr(X86CPU *cpu, int index, uint64_t *value)

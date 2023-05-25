@@ -182,6 +182,7 @@ struct kvm_hyperv_exit {
 #define KVM_EXIT_HYPERV_SYNIC          1
 #define KVM_EXIT_HYPERV_HCALL          2
 #define KVM_EXIT_HYPERV_SYNDBG         3
+#define KVM_EXIT_HYPERV_OVERLAY        4
 	__u32 type;
 	__u32 pad1;
 	union {
@@ -206,6 +207,14 @@ struct kvm_hyperv_exit {
 			__u64 recv_page;
 			__u64 pending_page;
 		} syndbg;
+        struct {
+            __u32 msr; /* kernel -> user */
+            __u8 vtl; /* kernel -> user */
+            __u8 error; /* user -> kernel */
+            __u8 is_hypercall; /* kernel -> user */
+            __u8 pad;
+            __u64 gpa; /* kernel -> user */
+        } overlay;
 	} u;
 };
 
@@ -1188,6 +1197,7 @@ struct kvm_ppc_resize_hpt {
 #define KVM_CAP_COUNTER_OFFSET 227
 #define KVM_CAP_ARM_EAGER_SPLIT_CHUNK_SIZE 228
 #define KVM_CAP_ARM_SUPPORTED_BLOCK_SIZES 229
+#define KVM_CAP_HYPERV_VSM 230
 
 #ifdef KVM_CAP_IRQ_ROUTING
 

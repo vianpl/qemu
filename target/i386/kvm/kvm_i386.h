@@ -69,5 +69,6 @@ bool kvm_filter_msr(KVMState *s, uint32_t msr, QEMURDMSRHandler *rdmsr,
                     QEMUWRMSRHandler *wrmsr);
 
 void kvm_set_max_apic_id(uint32_t max_apic_id);
+int kvm_put_one_msr_vtl(X86CPU *cpu, int index, uint64_t value, int vtl);
 
 #endif
