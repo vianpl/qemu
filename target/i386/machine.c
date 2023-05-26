@@ -827,9 +827,9 @@ static bool hyperv_synic_enable_needed(void *opaque)
     CPUX86State *env = &cpu->env;
     int i;
 
-    if (env->msr_hv_synic_control != 0 ||
-        env->msr_hv_synic_evt_page != 0 ||
-        env->msr_hv_synic_msg_page != 0) {
+    if (env->msr_hv_synic_control[0] != 0 ||
+        env->msr_hv_synic_evt_page[0] != 0 ||
+        env->msr_hv_synic_msg_page[0] != 0) {
         return true;
     }
 
@@ -845,7 +845,8 @@ static bool hyperv_synic_enable_needed(void *opaque)
 static int hyperv_synic_post_load(void *opaque, int version_id)
 {
     X86CPU *cpu = opaque;
-    hyperv_x86_synic_update(cpu);
+    hyperv_x86_synic_update(cpu, 0);
+    hyperv_x86_synic_update(cpu, 1);
     return 0;
 }
 
@@ -856,9 +857,9 @@ static const VMStateDescription vmstate_msr_hyperv_synic = {
     .needed = hyperv_synic_enable_needed,
     .post_load = hyperv_synic_post_load,
     .fields = (VMStateField[]) {
-        VMSTATE_UINT64(env.msr_hv_synic_control, X86CPU),
-        VMSTATE_UINT64(env.msr_hv_synic_evt_page, X86CPU),
-        VMSTATE_UINT64(env.msr_hv_synic_msg_page, X86CPU),
+        VMSTATE_UINT64_ARRAY(env.msr_hv_synic_control, X86CPU, HV_VTL_COUNT),
+        VMSTATE_UINT64_ARRAY(env.msr_hv_synic_evt_page, X86CPU, HV_VTL_COUNT),
+        VMSTATE_UINT64_ARRAY(env.msr_hv_synic_msg_page, X86CPU, HV_VTL_COUNT),
         VMSTATE_UINT64_ARRAY(env.msr_hv_synic_sint, X86CPU, HV_SINT_COUNT),
         VMSTATE_END_OF_LIST()
     }

@@ -3545,11 +3545,11 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
             kvm_msr_entry_add(cpu, HV_X64_MSR_SVERSION, HV_SYNIC_VERSION);
 
             kvm_msr_entry_add(cpu, HV_X64_MSR_SCONTROL,
-                              env->msr_hv_synic_control);
+                              env->msr_hv_synic_control[0]);
             kvm_msr_entry_add(cpu, HV_X64_MSR_SIEFP,
-                              env->msr_hv_synic_evt_page);
+                              env->msr_hv_synic_evt_page[0]);
             kvm_msr_entry_add(cpu, HV_X64_MSR_SIMP,
-                              env->msr_hv_synic_msg_page);
+                              env->msr_hv_synic_msg_page[0]);
 
             for (j = 0; j < ARRAY_SIZE(env->msr_hv_synic_sint); j++) {
                 kvm_msr_entry_add(cpu, HV_X64_MSR_SINT0 + j,
@@ -4267,13 +4267,13 @@ static int kvm_get_msrs(X86CPU *cpu)
             env->msr_hv_runtime = msrs[i].data;
             break;
         case HV_X64_MSR_SCONTROL:
-            env->msr_hv_synic_control = msrs[i].data;
+            env->msr_hv_synic_control[0] = msrs[i].data;
             break;
         case HV_X64_MSR_SIEFP:
-            env->msr_hv_synic_evt_page = msrs[i].data;
+            env->msr_hv_synic_evt_page[0] = msrs[i].data;
             break;
         case HV_X64_MSR_SIMP:
-            env->msr_hv_synic_msg_page = msrs[i].data;
+            env->msr_hv_synic_msg_page[0] = msrs[i].data;
             break;
         case HV_X64_MSR_SINT0 ... HV_X64_MSR_SINT15:
             env->msr_hv_synic_sint[index - HV_X64_MSR_SINT0] = msrs[i].data;
