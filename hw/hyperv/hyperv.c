@@ -597,6 +597,17 @@ int hyperv_set_msg_handler(uint32_t conn_id, HvMsgHandler handler, void *data)
     return ret;
 }
 
+uint64_t hyperv_hcall_vtl_protection_mask(CPUState *cs, bool fast,
+                                          struct hyperv_prot_mask *mask)
+{
+    uint64_t len = mask->len;
+
+    printf("%s:%d fast=%u vtl=%#x mask=%#x len=%#x gfn[0]=%#lx\n", __func__,
+         __LINE__, fast, mask->vtl, mask->mask, mask->len, mask->gfns[0]);
+
+    return len << HV_HYPERCALL_REP_COMP_OFFSET;
+}
+
 uint16_t hyperv_hcall_post_message(uint64_t param, bool fast)
 {
     uint16_t ret;

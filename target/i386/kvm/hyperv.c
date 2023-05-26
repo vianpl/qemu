@@ -89,11 +89,15 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
     case KVM_EXIT_HYPERV_HCALL: {
         uint16_t code = exit->u.hcall.input & 0xffff;
         bool fast = exit->u.hcall.input & HV_HYPERCALL_FAST;
-        uint64_t in_param = exit->u.hcall.params[0];
-        uint64_t out_param = exit->u.hcall.params[1];
+        uint64_t in_param = exit->u.hcall.params.post_message.ingpa;
+        uint64_t out_param = exit->u.hcall.params.post_message.outgpa;
 
         fprintf(stderr, "kvm_hv_handle_exit: hvcall 0x%x\n", code);
         switch (code) {
+        case HV_MODIFY_VTL_PROTECTION_MASK:
+            exit->u.hcall.result = hyperv_hcall_vtl_protection_mask(CPU(cpu),
+                fast, (struct hyperv_prot_mask *)&exit->u.hcall.params.prot_mask);
+            break;
         case HV_POST_MESSAGE:
             exit->u.hcall.result = hyperv_hcall_post_message(in_param, fast);
             break;
