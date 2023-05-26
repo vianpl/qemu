@@ -32,21 +32,21 @@ void hyperv_x86_synic_reset(X86CPU *cpu)
     hyperv_synic_reset(CPU(cpu));
 }
 
-void hyperv_x86_synic_update(X86CPU *cpu)
+void hyperv_x86_synic_update(X86CPU *cpu, int vtl)
 {
     CPUX86State *env = &cpu->env;
-    bool enable = env->msr_hv_synic_control & HV_SYNIC_ENABLE;
-    hwaddr msg_page_addr = (env->msr_hv_synic_msg_page & HV_SIMP_ENABLE) ?
-        (env->msr_hv_synic_msg_page & TARGET_PAGE_MASK) : 0;
-    hwaddr event_page_addr = (env->msr_hv_synic_evt_page & HV_SIEFP_ENABLE) ?
-        (env->msr_hv_synic_evt_page & TARGET_PAGE_MASK) : 0;
-    hyperv_synic_update(CPU(cpu), enable, msg_page_addr, event_page_addr);
+    bool enable = env->msr_hv_synic_control[vtl] & HV_SYNIC_ENABLE;
+    hwaddr msg_page_addr = (env->msr_hv_synic_msg_page[vtl] & HV_SIMP_ENABLE) ?
+        (env->msr_hv_synic_msg_page[vtl] & TARGET_PAGE_MASK) : 0;
+    hwaddr event_page_addr = (env->msr_hv_synic_evt_page[vtl] & HV_SIEFP_ENABLE) ?
+        (env->msr_hv_synic_evt_page[vtl] & TARGET_PAGE_MASK) : 0;
+    hyperv_synic_update(CPU(cpu), vtl, enable, msg_page_addr, event_page_addr);
 }
 
 static void async_synic_update(CPUState *cs, run_on_cpu_data data)
 {
     qemu_mutex_lock_iothread();
-    hyperv_x86_synic_update(X86_CPU(cs));
+    hyperv_x86_synic_update(X86_CPU(cs), data.host_int);
     qemu_mutex_unlock_iothread();
 }
 
@@ -56,21 +56,22 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
 
     fprintf(stderr, "kvm_hv_handle_exit: 0x%x\n", exit->type);
     switch (exit->type) {
-    case KVM_EXIT_HYPERV_SYNIC:
+    case KVM_EXIT_HYPERV_SYNIC: {
         if (!hyperv_feat_enabled(cpu, HYPERV_FEAT_SYNIC)) {
             return -1;
         }
 
         fprintf(stderr, "kvm_hv_handle_exit synic msr: %d\n", exit->u.synic.msr);
+        int vtl = exit->u.synic.vtl;
         switch (exit->u.synic.msr) {
         case HV_X64_MSR_SCONTROL:
-            env->msr_hv_synic_control = exit->u.synic.control;
+            env->msr_hv_synic_control[vtl] = exit->u.synic.control;
             break;
         case HV_X64_MSR_SIMP:
-            env->msr_hv_synic_msg_page = exit->u.synic.msg_page;
+            env->msr_hv_synic_msg_page[vtl] = exit->u.synic.msg_page;
             break;
         case HV_X64_MSR_SIEFP:
-            env->msr_hv_synic_evt_page = exit->u.synic.evt_page;
+            env->msr_hv_synic_evt_page[vtl] = exit->u.synic.evt_page;
             break;
         default:
             return -1;
@@ -81,9 +82,10 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
          * safe environment (i.e. when all cpus are quiescent) -- this is
          * necessary because memory hierarchy is being changed
          */
-        async_safe_run_on_cpu(CPU(cpu), async_synic_update, RUN_ON_CPU_NULL);
+        async_safe_run_on_cpu(CPU(cpu), async_synic_update, RUN_ON_CPU_HOST_INT(vtl));
 
         return 0;
+    }
     case KVM_EXIT_HYPERV_HCALL: {
         uint16_t code = exit->u.hcall.input & 0xffff;
         bool fast = exit->u.hcall.input & HV_HYPERCALL_FAST;

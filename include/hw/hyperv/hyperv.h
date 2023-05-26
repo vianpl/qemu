@@ -77,7 +77,7 @@ static inline uint32_t hyperv_vp_index(CPUState *cs)
 
 void hyperv_synic_add(CPUState *cs);
 void hyperv_synic_reset(CPUState *cs);
-void hyperv_synic_update(CPUState *cs, bool enable,
+void hyperv_synic_update(CPUState *cs, int vtl, bool enable,
                          hwaddr msg_page_addr, hwaddr event_page_addr);
 bool hyperv_is_synic_enabled(void);
 

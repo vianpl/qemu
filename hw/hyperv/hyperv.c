@@ -22,9 +22,7 @@
 #include "hw/hyperv/hyperv.h"
 #include "qom/object.h"
 
-struct SynICState {
-    DeviceState parent_obj;
-
+typedef struct SynICStateVtl {
     CPUState *cs;
 
     bool sctl_enabled;
@@ -37,6 +35,12 @@ struct SynICState {
 
     QemuMutex sint_routes_mutex;
     QLIST_HEAD(, HvSintRoute) sint_routes;
+} SynICStateVtl;
+
+struct SynICState {
+    DeviceState parent_obj;
+
+    struct SynICStateVtl vtl[HV_VTL_COUNT];
 };
 
 #define TYPE_SYNIC "hyperv-synic"
@@ -54,7 +58,12 @@ static SynICState *get_synic(CPUState *cs)
     return SYNIC(object_resolve_path_component(OBJECT(cs), "synic"));
 }
 
-static void synic_update(SynICState *synic, bool sctl_enable,
+static SynICStateVtl *get_default_vtl(SynICState *s)
+{
+    return &s->vtl[0];
+}
+
+static void synic_update(SynICStateVtl *synic, bool sctl_enable,
                          hwaddr msg_page_addr, hwaddr event_page_addr)
 {
 
@@ -83,10 +92,10 @@ static void synic_update(SynICState *synic, bool sctl_enable,
     }
 }
 
-void hyperv_synic_update(CPUState *cs, bool sctl_enable,
+void hyperv_synic_update(CPUState *cs, int vtl, bool sctl_enable,
                          hwaddr msg_page_addr, hwaddr event_page_addr)
 {
-    SynICState *synic = get_synic(cs);
+    SynICStateVtl *synic = &get_synic(cs)->vtl[vtl];
 
     if (!synic) {
         return;
@@ -95,22 +104,21 @@ void hyperv_synic_update(CPUState *cs, bool sctl_enable,
     synic_update(synic, sctl_enable, msg_page_addr, event_page_addr);
 }
 
-static void synic_realize(DeviceState *dev, Error **errp)
+static void synic_vtl_realize(Object *obj, SynICStateVtl *synic,
+                              int vtl, Error **errp)
 {
-    Object *obj = OBJECT(dev);
-    SynICState *synic = SYNIC(dev);
     char *msgp_name, *eventp_name;
     uint32_t vp_index;
 
     /* memory region names have to be globally unique */
     vp_index = hyperv_vp_index(synic->cs);
-    msgp_name = g_strdup_printf("synic-%u-msg-page", vp_index);
-    eventp_name = g_strdup_printf("synic-%u-event-page", vp_index);
+    msgp_name = g_strdup_printf("synic-%u-msg-page-vtl%u", vp_index, vtl);
+    eventp_name = g_strdup_printf("synic-%u-event-page-vtl%u", vp_index, vtl);
 
     memory_region_init_ram(&synic->msg_page_mr, obj, msgp_name,
-                           sizeof(*synic->msg_page), &error_abort);
+                         sizeof(*synic->msg_page), &error_abort);
     memory_region_init_ram(&synic->event_page_mr, obj, eventp_name,
-                           sizeof(*synic->event_page), &error_abort);
+                         sizeof(*synic->event_page), &error_abort);
     synic->msg_page = memory_region_get_ram_ptr(&synic->msg_page_mr);
     synic->event_page = memory_region_get_ram_ptr(&synic->event_page_mr);
     qemu_mutex_init(&synic->sint_routes_mutex);
@@ -120,13 +128,29 @@ static void synic_realize(DeviceState *dev, Error **errp)
     g_free(eventp_name);
 }
 
-static void synic_reset(DeviceState *dev)
+static void synic_realize(DeviceState *dev, Error **errp)
 {
+    Object *obj = OBJECT(dev);
     SynICState *synic = SYNIC(dev);
+
+    synic_vtl_realize(obj, &synic->vtl[0], 0, errp);
+    synic_vtl_realize(obj, &synic->vtl[1], 1, errp);
+}
+
+static void synic_vtl_reset(SynICStateVtl *synic)
+{
     memset(synic->msg_page, 0, sizeof(*synic->msg_page));
     memset(synic->event_page, 0, sizeof(*synic->event_page));
     synic_update(synic, false, 0, 0);
     assert(QLIST_EMPTY(&synic->sint_routes));
+}
+
+static void synic_reset(DeviceState *dev)
+{
+    SynICState *synic = SYNIC(dev);
+
+    synic_vtl_reset(&synic->vtl[0]);
+    synic_vtl_reset(&synic->vtl[1]);
 }
 
 static void synic_class_init(ObjectClass *klass, void *data)
@@ -145,7 +169,8 @@ void hyperv_synic_add(CPUState *cs)
 
     obj = object_new(TYPE_SYNIC);
     synic = SYNIC(obj);
-    synic->cs = cs;
+    synic->vtl[0].cs = cs;
+    synic->vtl[1].cs = cs;
     object_property_add_child(OBJECT(cs), "synic", obj);
     object_unref(obj);
     qdev_realize(DEVICE(obj), NULL, &error_abort);
@@ -213,7 +238,7 @@ typedef struct HvSintStagedMessage {
 
 struct HvSintRoute {
     uint32_t sint;
-    SynICState *synic;
+    SynICStateVtl *synic;
     int gsi;
     EventNotifier sint_set_notifier;
     EventNotifier sint_ack_notifier;
@@ -261,7 +286,7 @@ static void cpu_post_msg(CPUState *cs, run_on_cpu_data data)
 {
     HvSintRoute *sint_route = data.host_ptr;
     HvSintStagedMessage *staged_msg = sint_route->staged_msg;
-    SynICState *synic = sint_route->synic;
+    SynICStateVtl *synic = sint_route->synic;
     struct hyperv_message *dst_msg;
     bool wait_for_sint_ack = false;
 
@@ -344,7 +369,7 @@ static void sint_ack_handler(EventNotifier *notifier)
 int hyperv_set_event_flag(HvSintRoute *sint_route, unsigned eventno)
 {
     int ret;
-    SynICState *synic = sint_route->synic;
+    SynICStateVtl *synic = sint_route->synic;
     unsigned long *flags, set_mask;
     unsigned set_idx;
 
@@ -376,7 +401,7 @@ HvSintRoute *hyperv_sint_route_new(uint32_t vp_index, uint32_t sint,
     EventNotifier *ack_notifier = NULL;
     int r, gsi;
     CPUState *cs;
-    SynICState *synic;
+    SynICStateVtl *synic;
     bool ack_event_initialized = false;
 
     cs = hyperv_find_vcpu(vp_index);
@@ -384,7 +409,7 @@ HvSintRoute *hyperv_sint_route_new(uint32_t vp_index, uint32_t sint,
         return NULL;
     }
 
-    synic = get_synic(cs);
+    synic = get_default_vtl(get_synic(cs));
     if (!synic) {
         return NULL;
     }
@@ -471,7 +496,7 @@ void hyperv_sint_route_ref(HvSintRoute *sint_route)
 
 void hyperv_sint_route_unref(HvSintRoute *sint_route)
 {
-    SynICState *synic;
+    SynICStateVtl *synic;
 
     if (!sint_route) {
         return;
