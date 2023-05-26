@@ -27,9 +27,12 @@
 #define HV_STATUS_NOT_ACKNOWLEDGED            20
 #define HV_STATUS_NO_DATA                     27
 
+#define HV_HYPERCALL_REP_COMP_OFFSET          32
+
 /*
  * Hypercall numbers
  */
+#define HV_MODIFY_VTL_PROTECTION_MASK         0x000c
 #define HV_POST_MESSAGE                       0x005c
 #define HV_SIGNAL_EVENT                       0x005d
 #define HV_POST_DEBUG_DATA                    0x0069
@@ -80,6 +83,18 @@
  * Connection id valid bits
  */
 #define HV_CONNECTION_ID_MASK                 0x00ffffff
+
+struct hyperv_prot_mask {
+    uint8_t vtl;
+#define HV_VTL_PROTECTION_READ      0x01
+#define HV_VTL_PROTECTION_WRITE     0x02
+#define HV_VTL_PROTECTION_UMX       0x04
+#define HV_VTL_PROTECTION_KMX       0x08
+    uint8_t mask;
+    uint8_t pad[2];
+    uint32_t len;
+    uint64_t gfns[];
+};
 
 /*
  * Input structure for POST_MESSAGE hypercall

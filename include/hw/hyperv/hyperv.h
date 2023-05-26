@@ -58,6 +58,9 @@ int hyperv_set_msg_handler(uint32_t conn_id, HvMsgHandler handler, void *data);
  */
 int hyperv_set_event_flag_handler(uint32_t conn_id, EventNotifier *notifier);
 
+uint64_t hyperv_hcall_vtl_protection_mask(CPUState *cs, bool fast,
+                                          struct hyperv_prot_mask *mask);
+
 /*
  * Process HV_POST_MESSAGE hypercall: parse the data in the guest memory as
  * specified in @param, and call the HvMsgHandler associated with the
