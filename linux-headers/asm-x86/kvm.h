@@ -189,8 +189,7 @@ struct kvm_msr_entry {
 /* for KVM_GET_MSRS and KVM_SET_MSRS */
 struct kvm_msrs {
 	__u32 nmsrs; /* number of msrs in entries */
-    __u8 vtl;
-	__u8 pad[3];
+	__u32 pad;
 
 	struct kvm_msr_entry entries[];
 };

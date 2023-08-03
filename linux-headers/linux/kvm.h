@@ -188,8 +188,7 @@ struct kvm_hyperv_exit {
 	union {
 		struct {
 			__u32 msr;
-			__u8 vtl;
-            __u8 pad[3];
+			__u32 pad2;
 			__u64 control;
 			__u64 evt_page;
 			__u64 msg_page;
@@ -502,8 +501,7 @@ struct kvm_run {
 		/* KVM_EXIT_X86_RDMSR / KVM_EXIT_X86_WRMSR */
 		struct {
 			__u8 error; /* user -> kernel */
-            __u8 vtl;
-			__u8 pad[6];
+			__u8 pad[7];
 #define KVM_MSR_EXIT_REASON_INVAL	(1 << 0)
 #define KVM_MSR_EXIT_REASON_UNKNOWN	(1 << 1)
 #define KVM_MSR_EXIT_REASON_FILTER	(1 << 2)
