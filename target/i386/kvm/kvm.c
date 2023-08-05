@@ -694,36 +694,35 @@ static void kvm_reset_exception(CPUX86State *env)
     env->exception_payload = 0;
 }
 
-static void kvm_queue_exception(CPUX86State *env,
-                                int32_t exception_nr,
-                                uint8_t exception_has_payload,
-                                uint64_t exception_payload)
+void kvm_queue_exception(CPUX86State *env, int32_t exception_nr,
+                         uint8_t exception_has_payload,
+                         uint64_t exception_payload)
 {
-    assert(env->exception_nr == -1);
-    assert(!env->exception_pending);
-    assert(!env->exception_injected);
-    assert(!env->exception_has_payload);
+  assert(env->exception_nr == -1);
+  assert(!env->exception_pending);
+  assert(!env->exception_injected);
+  assert(!env->exception_has_payload);
 
-    env->exception_nr = exception_nr;
+  env->exception_nr = exception_nr;
 
-    if (has_exception_payload) {
-        env->exception_pending = 1;
+  if (has_exception_payload) {
+    env->exception_pending = 1;
 
-        env->exception_has_payload = exception_has_payload;
-        env->exception_payload = exception_payload;
+    env->exception_has_payload = exception_has_payload;
+    env->exception_payload = exception_payload;
+  } else {
+    env->exception_injected = 1;
+
+    if (exception_nr == EXCP01_DB) {
+      assert(exception_has_payload);
+      env->dr[6] = exception_payload;
+    } else if (exception_nr == EXCP0E_PAGE) {
+      assert(exception_has_payload);
+      env->cr[2] = exception_payload;
     } else {
-        env->exception_injected = 1;
-
-        if (exception_nr == EXCP01_DB) {
-            assert(exception_has_payload);
-            env->dr[6] = exception_payload;
-        } else if (exception_nr == EXCP0E_PAGE) {
-            assert(exception_has_payload);
-            env->cr[2] = exception_payload;
-        } else {
-            assert(!exception_has_payload);
-        }
+      assert(!exception_has_payload);
     }
+  }
 }
 
 static int kvm_inject_mce_oldstyle(X86CPU *cpu)
@@ -3082,20 +3081,12 @@ static void kvm_msr_entry_add(X86CPU *cpu, uint32_t index, uint64_t value)
     msrs->nmsrs++;
 }
 
-int kvm_put_one_msr_vtl(X86CPU *cpu, int index, uint64_t value, int vtl)
-{
-    struct kvm_msrs *msrs = cpu->kvm_msr_buf;
-
-    kvm_msr_buf_reset(cpu);
-    kvm_msr_entry_add(cpu, index, value);
-    msrs->vtl = vtl;
-
-    return kvm_vcpu_ioctl(CPU(cpu), KVM_SET_MSRS, cpu->kvm_msr_buf);
-}
-
 static int kvm_put_one_msr(X86CPU *cpu, int index, uint64_t value)
 {
-    return kvm_put_one_msr_vtl(cpu, index, value, 0);
+    kvm_msr_buf_reset(cpu);
+    kvm_msr_entry_add(cpu, index, value);
+
+    return kvm_vcpu_ioctl(CPU(cpu), KVM_SET_MSRS, cpu->kvm_msr_buf);
 }
 
 static int kvm_get_one_msr(X86CPU *cpu, int index, uint64_t *value)
@@ -3433,6 +3424,8 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
         kvm_msr_entry_add(cpu, MSR_KERNELGSBASE, env->kernelgsbase);
         kvm_msr_entry_add(cpu, MSR_FMASK, env->fmask);
         kvm_msr_entry_add(cpu, MSR_LSTAR, env->lstar);
+        kvm_msr_entry_add(cpu, MSR_FSBASE, env->fsbase);
+        kvm_msr_entry_add(cpu, MSR_GSBASE, env->gsbase);
     }
 #endif
 
@@ -3496,7 +3489,7 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
          * Hyper-V partition-wide MSRs: to avoid clearing them on cpu hot-add,
          * only sync them to KVM on the first cpu
          */
-        if (current_cpu == first_cpu) {
+        //if (current_cpu == first_cpu) {
             if (has_msr_hv_hypercall) {
                 kvm_msr_entry_add(cpu, HV_X64_MSR_GUEST_OS_ID,
                                   env->msr_hv_guest_os_id);
@@ -3522,7 +3515,7 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
                                   hyperv_syndbg_query_options());
             }
 #endif
-        }
+        //}
         if (hyperv_feat_enabled(cpu, HYPERV_FEAT_VAPIC)) {
             kvm_msr_entry_add(cpu, HV_X64_MSR_APIC_ASSIST_PAGE,
                               env->msr_hv_vapic);
@@ -3933,6 +3926,8 @@ static int kvm_get_msrs(X86CPU *cpu)
         kvm_msr_entry_add(cpu, MSR_KERNELGSBASE, 0);
         kvm_msr_entry_add(cpu, MSR_FMASK, 0);
         kvm_msr_entry_add(cpu, MSR_LSTAR, 0);
+        kvm_msr_entry_add(cpu, MSR_FSBASE, 0);
+        kvm_msr_entry_add(cpu, MSR_GSBASE, 0);
     }
 #endif
     kvm_msr_entry_add(cpu, MSR_KVM_SYSTEM_TIME, 0);
@@ -4145,6 +4140,12 @@ static int kvm_get_msrs(X86CPU *cpu)
 #ifdef TARGET_X86_64
         case MSR_CSTAR:
             env->cstar = msrs[i].data;
+            break;
+        case MSR_GSBASE:
+            env->gsbase = msrs[i].data;
+            break;
+        case MSR_FSBASE:
+            env->fsbase = msrs[i].data;
             break;
         case MSR_KERNELGSBASE:
             env->kernelgsbase = msrs[i].data;
@@ -4908,6 +4909,12 @@ int kvm_arch_get_registers(CPUState *cs)
         }
     }
 #endif
+    if (hyperv_feat_enabled(cpu, HYPERV_FEAT_VSM)) {
+        ret = kvm_get_hyperv_vsm_state(cpu, cs->kvm_state);
+        if (ret < 0) {
+            goto out;
+        }
+    }
     ret = 0;
  out:
     cpu_sync_bndcs_hflags(&cpu->env);
@@ -5119,7 +5126,7 @@ int kvm_arch_process_async_events(CPUState *cs)
     return cs->halted;
 }
 
-static int kvm_handle_halt(X86CPU *cpu)
+int kvm_handle_halt(X86CPU *cpu)
 {
     CPUState *cs = CPU(cpu);
     CPUX86State *env = &cpu->env;

@@ -50,18 +50,28 @@ static void async_synic_update(CPUState *cs, run_on_cpu_data data)
     qemu_mutex_unlock_iothread();
 }
 
+static void kvm_hv_inject_ud(CPUState *c)
+{
+    X86CPU *cpu = X86_CPU(c);
+    CPUX86State *env = &cpu->env;
+
+    fprintf(stderr, "%s, %d\n", __func__, __LINE__);
+    kvm_cpu_synchronize_state(c);
+    kvm_queue_exception(env, EXCP06_ILLOP, 0, 0);
+}
+
 int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
 {
     CPUX86State *env = &cpu->env;
 
-    fprintf(stderr, "kvm_hv_handle_exit: 0x%x\n", exit->type);
+    //fprintf(stderr, "kvm_hv_handle_exit: 0x%x\n", exit->type);
     switch (exit->type) {
-    case KVM_EXIT_HYPERV_SYNIC:
+    case KVM_EXIT_HYPERV_SYNIC: {
         if (!hyperv_feat_enabled(cpu, HYPERV_FEAT_SYNIC)) {
             return -1;
         }
 
-        fprintf(stderr, "kvm_hv_handle_exit synic msr: %d\n", exit->u.synic.msr);
+        fprintf(stderr, "kvm_hv_handle_exit synic msr: 0x%x\n", exit->u.synic.msr);
         switch (exit->u.synic.msr) {
         case HV_X64_MSR_SCONTROL:
             env->msr_hv_synic_control = exit->u.synic.control;
@@ -81,21 +91,56 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
          * safe environment (i.e. when all cpus are quiescent) -- this is
          * necessary because memory hierarchy is being changed
          */
-        async_safe_run_on_cpu(CPU(cpu), async_synic_update, RUN_ON_CPU_NULL);
+        //async_safe_run_on_cpu(CPU(cpu), async_synic_update, RUN_ON_CPU_NULL);
 
         return 0;
+    }
+
     case KVM_EXIT_HYPERV_HCALL: {
         uint16_t code = exit->u.hcall.input & 0xffff;
         bool fast = exit->u.hcall.input & HV_HYPERCALL_FAST;
-        uint64_t in_param = exit->u.hcall.params.post_message.ingpa;
-        uint64_t out_param = exit->u.hcall.params.post_message.outgpa;
+        uint16_t rep_cnt = (exit->u.hcall.input >> HV_HYPERCALL_REP_COMP_OFFSET) & 0xfff;
+        uint16_t rep_idx = (exit->u.hcall.input >> HV_HYPERCALL_REP_START_OFFSET) & 0xfff;
+        uint64_t in_param = exit->u.hcall.ingpa;
+        uint64_t out_param = exit->u.hcall.outgpa;
+        int ret;
 
-        fprintf(stderr, "kvm_hv_handle_exit: hvcall 0x%x\n", code);
+        //fprintf(stderr, "kvm_hv_handle_exit: hvcall 0x%x\n", code);
         switch (code) {
-        case HV_MODIFY_VTL_PROTECTION_MASK:
-            exit->u.hcall.result = hyperv_hcall_vtl_protection_mask(CPU(cpu),
-                fast, (struct hyperv_prot_mask *)&exit->u.hcall.params.prot_mask);
+        case HV_MODIFY_VTL_PROTECTION_MASK: {
+            uint16_t count = rep_cnt - rep_idx;
+
+            exit->u.hcall.result = hyperv_hcall_vtl_protection_mask(CPU(cpu), fast, count);
             break;
+        }
+        case HV_ENABLE_PARTITION_VTL:
+            exit->u.hcall.result = hyperv_hcall_vtl_enable_partition_vtl(CPU(cpu),
+                in_param, out_param, fast);
+          break;
+        case HV_ENABLE_VP_VTL:
+            exit->u.hcall.result =
+                hyperv_hcall_vtl_enable_vp_vtl(CPU(cpu), in_param, fast);
+          break;
+        case HV_VTL_CALL:
+            exit->u.hcall.result = HV_STATUS_SUCCESS;
+            ret = hyperv_hcall_vtl_call(CPU(cpu));
+            if (ret < 0)
+                kvm_hv_inject_ud(CPU(cpu));
+            return ret;
+        case HV_VTL_RETURN:
+            exit->u.hcall.result = HV_STATUS_SUCCESS;
+            ret = hyperv_hcall_vtl_return(CPU(cpu));
+            if (ret < 0)
+                kvm_hv_inject_ud(CPU(cpu));
+            return ret;
+        case HVCALL_GET_VP_REGISTERS:
+          exit->u.hcall.result =
+              hyperv_hcall_get_set_vp_register(CPU(cpu), exit, false);
+          break;
+        case HVCALL_SET_VP_REGISTERS:
+          exit->u.hcall.result =
+              hyperv_hcall_get_set_vp_register(CPU(cpu), exit, true);
+          break;
         case HV_POST_MESSAGE:
             exit->u.hcall.result = hyperv_hcall_post_message(in_param, fast);
             break;
@@ -134,31 +179,58 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
             exit->u.syndbg.status = HV_STATUS_SUCCESS;
             if (control & HV_SYNDBG_CONTROL_SEND) {
                 exit->u.syndbg.status =
-                    hyperv_syndbg_send(env->msr_hv_syndbg_send_page,
-                            HV_SYNDBG_CONTROL_SEND_SIZE(control));
-            } else if (control & HV_SYNDBG_CONTROL_RECV) {
-                exit->u.syndbg.status =
-                    hyperv_syndbg_recv(env->msr_hv_syndbg_recv_page,
-                            TARGET_PAGE_SIZE);
-            }
-            break;
+                hyperv_syndbg_send(env->msr_hv_syndbg_send_page,
+                        HV_SYNDBG_CONTROL_SEND_SIZE(control));
+        } else if (control & HV_SYNDBG_CONTROL_RECV) {
+            exit->u.syndbg.status =
+                hyperv_syndbg_recv(env->msr_hv_syndbg_recv_page,
+                        TARGET_PAGE_SIZE);
         }
-        case HV_X64_MSR_SYNDBG_PENDING_BUFFER:
-            env->msr_hv_syndbg_pending_page = exit->u.syndbg.pending_page;
-            hyperv_syndbg_set_pending_page(env->msr_hv_syndbg_pending_page);
-            break;
-        default:
-            return -1;
-        }
-
-        return 0;
-
-    case KVM_EXIT_HYPERV_OVERLAY:
-      fprintf(stderr, "kvm_hv_handle_exit: overlay msr 0x%x, vtl %d, gpa 0x%llx\n",
-              exit->u.overlay.msr, exit->u.overlay.vtl, exit->u.overlay.gpa);
-      return 0;
-
+        break;
+    }
+    case HV_X64_MSR_SYNDBG_PENDING_BUFFER:
+        env->msr_hv_syndbg_pending_page = exit->u.syndbg.pending_page;
+        hyperv_syndbg_set_pending_page(env->msr_hv_syndbg_pending_page);
+        break;
     default:
         return -1;
     }
+
+    return 0;
+
+    case KVM_EXIT_HYPERV_OVERLAY: {
+        fprintf(stderr, "overlay msr 0x%x, vtl %d, gpa 0x%llx\n",
+                exit->u.overlay.msr, exit->u.overlay.vtl, exit->u.overlay.gpa);
+        switch (exit->u.overlay.msr) {
+        case HV_X64_MSR_APIC_ASSIST_PAGE:
+            hyperv_setup_vp_assist(CPU(cpu), exit->u.overlay.gpa,
+                                 exit->u.overlay.vtl);
+          break;
+        default:
+            return 0;
+        }
+
+        return 0;
+    }
+    default:
+        return -1;
+    }
+}
+
+int kvm_get_hyperv_vsm_state(X86CPU *cpu, KVMState *vm)
+{
+    struct kvm_hv_vsm_state vsm_state;
+    CPUX86State *env = &cpu->env;
+    int ret;
+
+    ret = kvm_vm_ioctl(vm, KVM_HV_GET_VSM_STATE, &vsm_state);
+    if (ret) {
+        fprintf(stderr, "Failed to get VSM state ret=%d\n", ret);
+        return ret;
+    }
+
+    env->vsm_code_page_offsets32 = vsm_state.vsm_code_page_offsets32;
+    env->vsm_code_page_offsets64 = vsm_state.vsm_code_page_offsets64;
+
+    return 0;
 }

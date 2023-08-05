@@ -46,6 +46,7 @@ static void *kvm_vcpu_thread_fn(void *arg)
     cpu_thread_signal_created(cpu);
     qemu_guest_random_seed_thread_part2(cpu->random_seed);
 
+    printf("Started thread for cpu %d\n", cpu->cpu_index);
     do {
         if (cpu_can_run(cpu)) {
             r = kvm_cpu_exec(cpu);
@@ -55,6 +56,8 @@ static void *kvm_vcpu_thread_fn(void *arg)
         }
         qemu_wait_io_event(cpu);
     } while (!cpu->unplug || cpu_can_run(cpu));
+
+    printf("Stopped thread for cpu %d\n", cpu->cpu_index);
 
     kvm_destroy_vcpu(cpu);
     cpu_thread_signal_destroyed(cpu);

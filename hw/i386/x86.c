@@ -127,6 +127,7 @@ void x86_cpus_init(X86MachineState *x86ms, int default_cpu_version)
      */
     x86ms->apic_id_limit = x86_cpu_apic_id_from_index(x86ms,
                                                       ms->smp.max_cpus - 1) + 1;
+    printf("%s, %d, apic_id_limit=%x\n", __func__, __LINE__, x86ms->apic_id_limit);
 
     /*
      * Can we support APIC ID 255 or higher?  With KVM, that requires
@@ -144,6 +145,7 @@ void x86_cpus_init(X86MachineState *x86ms, int default_cpu_version)
     }
 
     possible_cpus = mc->possible_cpu_arch_ids(ms);
+    printf("%s,%d: cpus=%u\n", __func__, __LINE__, ms->smp.cpus);
     for (i = 0; i < ms->smp.cpus; i++) {
         x86_cpu_new(x86ms, possible_cpus->cpus[i].arch_id, &error_fatal);
     }
@@ -487,6 +489,7 @@ const CPUArchIdList *x86_possible_cpu_arch_ids(MachineState *ms)
             x86_cpu_apic_id_from_index(x86ms, i);
         x86_topo_ids_from_apicid(ms->possible_cpus->cpus[i].arch_id,
                                  &topo_info, &topo_ids);
+        printf("%s, %d: arch_id=%lx, topo_ids.die_id=%x, topo_ids.core_id=%x, topo_ids.smt_id=%x,topo_ids.pkg_id=%x\n", __func__, __LINE__, ms->possible_cpus->cpus[i].arch_id, topo_ids.die_id, topo_ids.core_id, topo_ids.smt_id, topo_ids.pkg_id);
         ms->possible_cpus->cpus[i].props.has_socket_id = true;
         ms->possible_cpus->cpus[i].props.socket_id = topo_ids.pkg_id;
         if (ms->smp.dies > 1) {

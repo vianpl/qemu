@@ -196,25 +196,10 @@ struct kvm_hyperv_exit {
 		struct {
 			__u64 input;
 			__u64 result;
-            union {
-                struct {
-                    __u64 ingpa;
-                    __u64 outgpa;
-                } post_message;
-                struct {
-                    __u8 vtl;
-#define KVM_HV_VTL_PROTECTION_READ	0x01
-#define KVM_HV_VTL_PROTECTION_WRITE	0x02
-#define KVM_HV_VTL_PROTECTION_UMX	0x04
-#define KVM_HV_VTL_PROTECTION_KMX	0x08
-                    __u8 mask;
-                    __u8 pad[2];
-                    __u32 len;
-/* This is not a spec limit, but rather something we use to limit stack memory usage */
-#define KVM_HV_VP_REGISTER_LIST_SIZE 16u
-                    __u64 gfns[KVM_HV_VP_REGISTER_LIST_SIZE];
-                } prot_mask;
-            } params;
+            __u64 ingpa;
+            __u64 outgpa;
+            #define HV_HYPERCALL_MAX_XMM_REGISTERS		6
+            __u64 xmm[HV_HYPERCALL_MAX_XMM_REGISTERS * 2];
 		} hcall;
 		struct {
 			__u32 msr;
@@ -835,6 +820,7 @@ enum {
 	kvm_ioeventfd_flag_nr_deassign,
 	kvm_ioeventfd_flag_nr_virtio_ccw_notify,
 	kvm_ioeventfd_flag_nr_fast_mmio,
+	kvm_ioeventfd_flag_nr_vcpu_notify,
 	kvm_ioeventfd_flag_nr_max,
 };
 
@@ -843,6 +829,7 @@ enum {
 #define KVM_IOEVENTFD_FLAG_DEASSIGN  (1 << kvm_ioeventfd_flag_nr_deassign)
 #define KVM_IOEVENTFD_FLAG_VIRTIO_CCW_NOTIFY \
 	(1 << kvm_ioeventfd_flag_nr_virtio_ccw_notify)
+#define KVM_IOEVENTFD_FLAG_VCPU_NOTIFY (1 << kvm_ioeventfd_flag_nr_vcpu_notify)
 
 #define KVM_IOEVENTFD_VALID_FLAG_MASK  ((1 << kvm_ioeventfd_flag_nr_max) - 1)
 
@@ -2279,5 +2266,7 @@ struct kvm_s390_zpci_op {
 
 /* flags for kvm_s390_zpci_op->u.reg_aen.flags */
 #define KVM_S390_ZPCIOP_REGAEN_HOST    (1 << 0)
+
+#define KVM_HV_GET_VSM_STATE _IOR(KVMIO, 0xd4, struct kvm_hv_vsm_state)
 
 #endif /* __LINUX_KVM_H */

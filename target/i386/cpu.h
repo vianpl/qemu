@@ -1674,6 +1674,8 @@ typedef struct CPUArchState {
     target_ulong cstar;
     target_ulong fmask;
     target_ulong kernelgsbase;
+    target_ulong gsbase;
+    target_ulong fsbase;
 #endif
 
     uint64_t tsc_adjust;
@@ -1885,6 +1887,10 @@ typedef struct CPUArchState {
     TPRAccess tpr_access_type;
 
     unsigned nr_dies;
+
+    /* Hyper-V VSM specific */
+    uint64_t vsm_code_page_offsets64;
+    uint64_t vsm_code_page_offsets32;
 } CPUX86State;
 
 struct kvm_msrs;
@@ -1925,6 +1931,7 @@ struct ArchCPU {
     uint32_t hyperv_ver_id_sp;
     uint8_t hyperv_ver_id_sb;
     uint32_t hyperv_ver_id_sn;
+    uint16_t hyperv_vtl;
 
     bool check_cpuid;
     bool enforce_cpuid;

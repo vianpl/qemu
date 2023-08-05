@@ -1248,6 +1248,28 @@ static int kvm_set_ioeventfd_pio(int fd, uint16_t addr, uint16_t val,
     return 0;
 }
 
+static int kvm_set_ioeventfd_vcpu(int fd, uint16_t addr, bool assign)
+{
+    struct kvm_ioeventfd kick = {
+        .addr = addr,
+        .flags = KVM_IOEVENTFD_FLAG_VCPU_NOTIFY,
+        .fd = fd,
+    };
+    int r;
+    trace_kvm_set_ioeventfd_pio(fd, addr, 0, assign, 0, false);
+    if (!kvm_enabled()) {
+        return -ENOSYS;
+    }
+    if (!assign) {
+        kick.flags |= KVM_IOEVENTFD_FLAG_DEASSIGN;
+    }
+    r = kvm_vm_ioctl(kvm_state, KVM_IOEVENTFD, &kick);
+    if (r < 0) {
+        return r;
+    }
+    return 0;
+}
+
 
 static int kvm_check_many_ioeventfds(void)
 {
@@ -1754,6 +1776,32 @@ static void kvm_io_ioeventfd_del(MemoryListener *listener,
                 __func__, strerror(-r), -r);
         abort();
     }
+}
+
+void kvm_vcpu_ioeventfd_add(unsigned int cpu_index, EventNotifier *e)
+{
+  int fd = event_notifier_get_fd(e);
+  int r;
+
+  r = kvm_set_ioeventfd_vcpu(fd, cpu_index, true);
+  if (r < 0) {
+    fprintf(stderr, "%s: error adding ioeventfd: %s (%d)\n", __func__,
+            strerror(-r), -r);
+    abort();
+  }
+}
+
+void kvm_vcpu_ioeventfd_del(unsigned int cpu_index, EventNotifier *e)
+{
+  int fd = event_notifier_get_fd(e);
+  int r;
+
+  r = kvm_set_ioeventfd_vcpu(fd, cpu_index, false);
+  if (r < 0) {
+    fprintf(stderr, "%s: error deleting ioeventfd: %s (%d)\n", __func__,
+            strerror(-r), -r);
+    abort();
+  }
 }
 
 void kvm_memory_listener_register(KVMState *s, KVMMemoryListener *kml,

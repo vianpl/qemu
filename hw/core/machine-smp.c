@@ -152,6 +152,7 @@ void machine_parse_smp_config(MachineState *ms,
     maxcpus = maxcpus > 0 ? maxcpus : sockets * dies * clusters * cores * threads;
     cpus = cpus > 0 ? cpus : maxcpus;
 
+    printf("%s, %d, cpus=%d\n", __func__, __LINE__, cpus);
     ms->smp.cpus = cpus;
     ms->smp.sockets = sockets;
     ms->smp.dies = dies;

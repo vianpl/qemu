@@ -10,6 +10,8 @@
 #ifndef HW_HYPERV_HYPERV_H
 #define HW_HYPERV_HYPERV_H
 
+#include <linux/kvm.h>
+
 #include "cpu-qom.h"
 #include "hw/hyperv/hyperv-proto.h"
 
@@ -58,8 +60,20 @@ int hyperv_set_msg_handler(uint32_t conn_id, HvMsgHandler handler, void *data);
  */
 int hyperv_set_event_flag_handler(uint32_t conn_id, EventNotifier *notifier);
 
-uint64_t hyperv_hcall_vtl_protection_mask(CPUState *cs, bool fast,
-                                          struct hyperv_prot_mask *mask);
+uint64_t hyperv_hcall_vtl_protection_mask(CPUState *cs, bool fast, uint64_t count);
+
+uint16_t hyperv_hcall_vtl_enable_partition_vtl(CPUState *cs, uint64_t param1,
+                                               uint64_t param2, bool fast);
+
+uint16_t hyperv_hcall_vtl_enable_vp_vtl(CPUState *cs, uint64_t param, bool fast);
+
+int hyperv_hcall_vtl_call(CPUState *cs);
+int hyperv_hcall_vtl_return(CPUState *cs);
+
+uint64_t hyperv_hcall_get_set_vp_register(CPUState *cs, struct kvm_hyperv_exit *exit,
+                                          bool set);
+
+void hyperv_setup_vp_assist(CPUState *cs, uint64_t gpa, int vtl);
 
 /*
  * Process HV_POST_MESSAGE hypercall: parse the data in the guest memory as
