@@ -3233,6 +3233,26 @@ int kvm_vcpu_ioctl(CPUState *cpu, int type, ...)
     return ret;
 }
 
+int kvm_vcpu_ppoll(CPUState *cpu, short int *events, const __sigset_t *set)
+{
+    struct pollfd p = {
+		.fd = cpu->kvm_fd,
+		.events = POLLIN,
+		.revents = 0
+	};
+    int ret;
+
+    trace_kvm_vcpu_poll(cpu->cpu_index);
+    accel_cpu_ioctl_begin(cpu);
+    ret = ppoll(&p, 1, NULL, set);
+    accel_cpu_ioctl_end(cpu);
+    if (ret == -1) {
+        ret = -errno;
+    }
+    *events = p.revents;
+    return ret;
+}
+
 int kvm_device_ioctl(int fd, int type, ...)
 {
     int ret;
@@ -3542,6 +3562,10 @@ static void kvm_ipi_signal(int sig)
     }
 }
 
+static void kvm_epoll_kick(int sig)
+{
+}
+
 void kvm_init_cpu_signals(CPUState *cpu)
 {
     int r;
@@ -3552,12 +3576,17 @@ void kvm_init_cpu_signals(CPUState *cpu)
     sigact.sa_handler = kvm_ipi_signal;
     sigaction(SIG_IPI, &sigact, NULL);
 
+    memset(&sigact, 0, sizeof(sigact));
+    sigact.sa_handler = kvm_epoll_kick;
+    sigaction(SIG_EPOLL_KICK, &sigact, NULL);
+
     pthread_sigmask(SIG_BLOCK, NULL, &set);
 #if defined KVM_HAVE_MCE_INJECTION
     sigdelset(&set, SIGBUS);
     pthread_sigmask(SIG_SETMASK, &set, NULL);
 #endif
     sigdelset(&set, SIG_IPI);
+    sigdelset(&set, SIG_EPOLL_KICK);
     if (kvm_immediate_exit) {
         r = pthread_sigmask(SIG_SETMASK, &set, NULL);
     } else {

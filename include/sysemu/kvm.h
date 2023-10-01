@@ -271,6 +271,8 @@ int kvm_vm_ioctl(KVMState *s, int type, ...);
 
 int kvm_vcpu_ioctl(CPUState *cpu, int type, ...);
 
+int kvm_vcpu_ppoll(CPUState *cpu, short int *events, const __sigset_t *set);
+
 /**
  * kvm_device_ioctl - call an ioctl on a kvm device
  * @fd: The KVM device file descriptor as returned from KVM_CREATE_DEVICE

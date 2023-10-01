@@ -544,11 +544,29 @@ static bool all_vcpus_paused(void)
     return true;
 }
 
+void pause_cond_broadcast(void)
+{
+    qemu_cond_broadcast(&qemu_pause_cond);
+}
+
+void wait_pause_cond(void)
+{
+    qemu_cond_wait(&qemu_pause_cond, &qemu_global_mutex);
+}
+
 void wait_cpu_stopped(CPUState *cpu)
 {
     while (!cpu->stopped) {
-        qemu_cond_wait(&qemu_pause_cond, &qemu_global_mutex);
         qemu_cpu_kick(cpu);
+        qemu_cond_wait(&qemu_pause_cond, &qemu_global_mutex);
+    }
+}
+
+void wait_poll_stopped(CPUState *cpu)
+{
+    while (!cpu->stopped) {
+        pthread_kill(cpu->thread->thread, SIG_EPOLL_KICK);
+        qemu_cond_wait(&qemu_pause_cond, &qemu_global_mutex);
     }
 }
 

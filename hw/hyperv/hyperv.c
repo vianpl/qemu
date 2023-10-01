@@ -7,6 +7,8 @@
  * See the COPYING file in the top-level directory.
  */
 
+#include <poll.h>
+
 #include "qemu/osdep.h"
 #include "qemu/main-loop.h"
 #include "qemu/module.h"
@@ -779,6 +781,7 @@ struct VpVsmState {
     union hv_register_vsm_vp_secure_vtl_config vsm_vtl_config[HV_NUM_VTLS];
     struct kvm_hv_vcpu_per_vtl_state priv_state;
     void *vp_assist;
+    __sigset_t sigset;
 };
 
 static CPUState *hyperv_get_next_vtl(CPUState *cs)
@@ -1084,8 +1087,8 @@ static void hyperv_sync_shared_vtl_state(CPUState *active_cs, CPUState *next_cs)
     CPUX86State *next_env = &X86_CPU(next_cs)->env;
 
     if (!qemu_mutex_iothread_locked()) {
-        fprintf(stderr, "%s should be called with the iothread lock held\n", __func__);
-        return;
+        printf("%s should be called with the iothread lock held\n", __func__);
+        exit(1);
     }
 
     cpu_synchronize_state(next_cs);
@@ -1147,13 +1150,6 @@ static void vp_vsm_notifier(EventNotifier *e)
     CPUState *active_cs;
 
     event_notifier_test_and_clear(e);
-    //printf("Got nofied for vcpu %d\n", vpvsm->cs->cpu_index);
-
-    /* Ignore VTL0 */
-    if (!get_active_vtl(next_cs)) {
-        //printf("Ignoring VTL0\n");
-        return;
-    }
 
     active_cs = hyperv_get_prev_vtl(next_cs);
     if (!active_cs) {
@@ -1189,19 +1185,28 @@ static void vp_vsm_notifier(EventNotifier *e)
 static void vp_vsm_realize(DeviceState *dev, Error **errp)
 {
     VpVsmState *vpvsm = VP_VSM(dev);
-    int ret;
+    int vtl = get_active_vtl(vpvsm->cs);
+    /* int ret; */
 
     vpvsm->vsm_vp_status.enabled_vtl_set = 1 << 0; /* VTL0 is enabled */
-    vpvsm->vsm_vp_status.active_vtl = get_active_vtl(vpvsm->cs);
+    vpvsm->vsm_vp_status.active_vtl = vtl;
 
-    ret = event_notifier_init(&vpvsm->notifier, 0);
-    if (ret < 0) {
-        error_setg(errp, "Failed to init ioevent notifier for vcpu %d",
-                   vpvsm->cs->cpu_index);
-        return;
-    }
-    event_notifier_set_handler(&vpvsm->notifier, vp_vsm_notifier);
-    kvm_vcpu_ioeventfd_add(vpvsm->cs->cpu_index, &vpvsm->notifier);
+    sigfillset(&vpvsm->sigset);
+    sigdelset(&vpvsm->sigset, SIG_EPOLL_KICK);
+
+
+    /* VTL0 shouldn't receive events */
+    /* if (!vtl) */
+        /* return; */
+
+    /* ret = event_notifier_init(&vpvsm->notifier, 0); */
+    /* if (ret < 0) { */
+        /* error_setg(errp, "Failed to init ioevent notifier for vcpu %d", */
+                   /* vpvsm->cs->cpu_index); */
+        /* return; */
+    /* } */
+    /* event_notifier_set_handler(&vpvsm->notifier, vp_vsm_notifier); */
+    /* kvm_vcpu_ioeventfd_add(vpvsm->cs->cpu_index, &vpvsm->notifier); */
 }
 
 static void vp_vsm_class_init(ObjectClass *klass, void *data)
@@ -1491,47 +1496,97 @@ static void hv_read_vtl_control(CPUState *cs, struct hv_vp_vtl_control *vtl_cont
            sizeof(*vtl_control));
 }
 
-static void switch_vtl(CPUState *active_cs, CPUState *next_cs)
+int hyperv_hcall_vtl_call(CPUState *vtl0)
 {
-    qemu_mutex_lock_iothread();
-    hyperv_sync_shared_vtl_state(active_cs, next_cs);
-    cpu_resume(next_cs);
-    qemu_cpu_stop(active_cs, true);
-    qemu_mutex_unlock_iothread();
-}
+    CPUState *vtl1 = hyperv_get_next_vtl(vtl0);
 
-int hyperv_hcall_vtl_call(CPUState *active_cs)
-{
-    CPUState *next_cs = hyperv_get_next_vtl(active_cs);
-
-    trace_hyperv_hcall_vtl_call(get_active_vtl(active_cs),
-                                get_active_vtl(next_cs));
+    trace_hyperv_hcall_vtl_call(get_active_vtl(vtl0),
+                                get_active_vtl(vtl1));
 
     /* vtl1 wasn't initialized? */
-    if (!next_cs)
+    if (!vtl1)
         return -1;
 
     /* We only support vtl0<->vtl1 */
-    if (get_active_vtl(active_cs) > 1)
+    if (get_active_vtl(vtl0) > 1)
         return -1;
 
-    set_vtl_entry_reason(next_cs, HV_VTL_ENTRY_VTL_CALL);
-    switch_vtl(active_cs, next_cs);
-    //printf("%s out\n", __func__);
+    qemu_mutex_lock_iothread();
+    /*
+     * VTLCALL has priority over any event that happens concurrently. The
+     * interrupts will be delivered nonetheless.
+     */
+    vtl1->stop = true;
+    wait_poll_stopped(vtl1);
 
+    /*
+     * This could be done on the vtl_retrun side, but then we'd be abusing
+     * vtl->stop. We need to get rid of the depenency with iothread mutex, so
+     * it'll change in the future.
+     */
+    set_vtl_entry_reason(vtl1, HV_VTL_ENTRY_VTL_CALL);
+    hyperv_sync_shared_vtl_state(vtl0, vtl1);
+    cpu_resume(vtl1);
+
+    vtl0->stop = true;
+    qemu_mutex_unlock_iothread();
     return EXCP_HALTED;
 }
 
-int hyperv_hcall_vtl_return(CPUState *active_cs)
+int hyperv_hcall_vtl_return(CPUState *vtl1)
 {
-    CPUState *next_cs = hyperv_get_prev_vtl(active_cs);
+    CPUState *vtl0 = hyperv_get_prev_vtl(vtl1);
+    VpVsmState *vpvsm = get_vp_vsm(vtl1);
+    short int events;
+    int ret;
 
-    trace_hyperv_hcall_vtl_return(get_active_vtl(active_cs),
-                                  get_active_vtl(next_cs), 0);
+    trace_hyperv_hcall_vtl_return(get_active_vtl(vtl1),
+                                  get_active_vtl(vtl0), 0);
+    qemu_mutex_lock_iothread();
+    hyperv_sync_shared_vtl_state(vtl1, vtl0);
+    cpu_resume(vtl0);
+    qemu_mutex_unlock_iothread();
 
-    switch_vtl(active_cs, next_cs);
-    //printf("%s out\n", __func__);
+    while (true) {
+        ret = kvm_vcpu_ppoll(vtl1, &events, &vpvsm->sigset);
+        if (ret < 0 && ret != -EINTR) {
+            printf("vCPU %d failed to poll with err %d\n",
+                   vtl1->cpu_index, ret);
+            exit(1);
+        }
 
+        if (vtl1->stop)
+            goto stop_vcpu;
+
+        if (events & POLLIN) {
+            qemu_mutex_lock_iothread();
+            vtl0->stop = true;
+            while (!vtl0->stopped && !vtl1->stop) {
+                qemu_cpu_kick(vtl0);
+                wait_pause_cond();
+            }
+            qemu_mutex_unlock_iothread();
+
+            if (vtl1->stop)
+                    goto stop_vcpu;
+
+            if (vtl0->stopped) {
+                qemu_mutex_lock_iothread();
+                set_vtl_entry_reason(vtl1, HV_VTL_ENTRY_INTERRUPT);
+                hyperv_sync_shared_vtl_state(vtl0, vtl1);
+                qemu_mutex_unlock_iothread();
+                break;
+            }
+        }
+
+        printf("Spurrious signal on vcpu %d, events %d\n", vtl1->cpu_index,
+               events);
+    }
+
+    return 0;
+
+stop_vcpu:
+    vtl1->stop = true;
     return EXCP_HALTED;
 }
 
@@ -1737,8 +1792,8 @@ static uint64_t get_vp_register(uint32_t name, struct hv_vp_register_val *val,
         return HV_STATUS_INVALID_PARAMETER;
     };
 
-    printf("name %x, val %llx, cpuid %d\n", name, val->low,
-            target_vcpu->cpu_index);
+    /* printf("name %x, val %llx, cpuid %d\n", name, val->low, */
+            /* target_vcpu->cpu_index); */
     trace_hyperv_get_vp_register(name, val->low, val->high);
     return HV_STATUS_SUCCESS;
 }
@@ -1753,8 +1808,8 @@ static uint64_t set_vp_register(uint32_t name, struct hv_vp_register_val *val,
     cpu = X86_CPU(target_vcpu);
     env = &cpu->env;
 
-    printf("name %x, val %llx, cpuid %d\n", name, val->low, target_vcpu->cpu_index);
-    trace_hyperv_set_vp_register(name, val->low, val->high);
+    /* printf("name %x, val %llx, cpuid %d\n", name, val->low, target_vcpu->cpu_index); */
+    /* trace_hyperv_set_vp_register(name, val->low, val->high); */
 
     switch (name) {
     case HV_X64_REGISTER_RSP:
