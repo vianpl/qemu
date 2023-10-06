@@ -3586,7 +3586,6 @@ void kvm_init_cpu_signals(CPUState *cpu)
     pthread_sigmask(SIG_SETMASK, &set, NULL);
 #endif
     sigdelset(&set, SIG_IPI);
-    sigdelset(&set, SIG_EPOLL_KICK);
     if (kvm_immediate_exit) {
         r = pthread_sigmask(SIG_SETMASK, &set, NULL);
     } else {

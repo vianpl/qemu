@@ -3978,7 +3978,8 @@ static int kvm_get_msrs(X86CPU *cpu)
         kvm_msr_entry_add(cpu, HV_X64_MSR_HYPERCALL, 0);
         kvm_msr_entry_add(cpu, HV_X64_MSR_GUEST_OS_ID, 0);
     }
-    if (hyperv_feat_enabled(cpu, HYPERV_FEAT_VAPIC)) {
+    if (hyperv_feat_enabled(cpu, HYPERV_FEAT_VAPIC) ||
+        hyperv_feat_enabled(cpu, HYPERV_FEAT_VSM)) {
         kvm_msr_entry_add(cpu, HV_X64_MSR_APIC_ASSIST_PAGE, 0);
     }
     if (hyperv_feat_enabled(cpu, HYPERV_FEAT_TIME)) {
@@ -5536,6 +5537,10 @@ int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
         break;
     case KVM_EXIT_HYPERV:
         ret = kvm_hv_handle_exit(cpu, &run->hyperv);
+        break;
+    case KVM_EXIT_MEMORY_FAULT:
+        ret = kvm_hv_handle_fault(cs, run->memory.gpa, run->memory.size,
+                                  run->memory.flags);
         break;
     case KVM_EXIT_IOAPIC_EOI:
         ioapic_eoi_broadcast(run->eoi.vector);

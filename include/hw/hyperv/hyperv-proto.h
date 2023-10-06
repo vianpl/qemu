@@ -17,6 +17,7 @@
 
 //TODO: 16?
 #define HV_NUM_VTLS		2
+#define HV_INVALID_VTL	((uint8_t) -1)
 
 /*
  * Hypercall status code
@@ -208,6 +209,96 @@ struct hyperv_message {
     struct hyperv_message_header header;
     uint8_t payload[HV_MESSAGE_PAYLOAD_SIZE];
 };
+
+struct hv_x64_segment_register {
+	uint64_t base;
+	uint32_t limit;
+	uint16_t selector;
+	union {
+		struct {
+			uint16_t segment_type : 4;
+			uint16_t non_system_segment : 1;
+			uint16_t descriptor_privilege_level : 2;
+			uint16_t present : 1;
+			uint16_t reserved : 4;
+			uint16_t available : 1;
+			uint16_t _long : 1;
+			uint16_t _default : 1;
+			uint16_t granularity : 1;
+		} __attribute__ ((__packed__));
+		uint16_t attributes;
+	};
+} __attribute__ ((__packed__));
+
+/* Intecept message header */
+struct hyperv_intercept_header {
+	uint32_t vp_index;
+	uint8_t instruction_length;
+#define HV_INTERCEPT_ACCESS_READ    0
+#define HV_INTERCEPT_ACCESS_WRITE   1
+#define HV_INTERCEPT_ACCESS_EXECUTE 2
+#define HV_INTERCEPT_ACCESS_MASK_EXECUTE 4
+	uint8_t access_type_mask;
+	union {
+		uint16_t as_u16;
+		struct {
+			uint16_t cpl:2;
+			uint16_t cr0_pe:1;
+			uint16_t cr0_am:1;
+			uint16_t efer_lma:1;
+			uint16_t debug_active:1;
+			uint16_t interruption_pending:1;
+			uint16_t reserved:9;
+		};
+	} exec_state;
+	struct hv_x64_segment_register cs;
+	uint64_t rip;
+	uint64_t rflags;
+} __attribute__ ((__packed__));
+
+union hyperv_x64_memory_access_info {
+	uint8_t as_u8;
+	struct {
+		uint8_t gva_valid:1;
+		uint8_t _reserved:7;
+	};
+};
+
+struct hyperv_memory_intercept_message {
+	struct hyperv_intercept_header header;
+#define HV_X64_CACHE_TYPE_UNCACHED       0
+#define HV_X64_CACHE_TYPE_WRITECOMBINING 1
+#define HV_X64_CACHE_TYPE_WRITETHROUGH   4
+#define HV_X64_CACHE_TYPE_WRITEPROTECTED 5
+#define HV_X64_CACHE_TYPE_WRITEBACK      6
+	uint32_t cache_type;
+	uint8_t instruction_byte_count;
+	union hyperv_x64_memory_access_info memory_access_info;
+	uint16_t _reserved;
+	uint64_t gva;
+	uint64_t gpa;
+	uint8_t instruction_bytes[16];
+	struct hv_x64_segment_register ds;
+	struct hv_x64_segment_register ss;
+	uint64_t rax;
+	uint64_t rcx;
+	uint64_t rdx;
+	uint64_t rbx;
+	uint64_t rsp;
+	uint64_t rbp;
+	uint64_t rsi;
+	uint64_t rdi;
+	uint64_t r8;
+	uint64_t r9;
+	uint64_t r10;
+	uint64_t r11;
+	uint64_t r12;
+	uint64_t r13;
+	uint64_t r14;
+	uint64_t r15;
+} __attribute__ ((__packed__));
+
+
 
 struct hyperv_message_page {
     struct hyperv_message slot[HV_SINT_COUNT];

@@ -276,6 +276,7 @@ struct kvm_xen_exit {
 #define KVM_EXIT_RISCV_SBI        35
 #define KVM_EXIT_RISCV_CSR        36
 #define KVM_EXIT_NOTIFY           37
+#define KVM_EXIT_MEMORY_FAULT     38
 
 /* For KVM_EXIT_INTERNAL_ERROR */
 /* Emulate instruction failed. */
@@ -519,6 +520,18 @@ struct kvm_run {
 #define KVM_NOTIFY_CONTEXT_INVALID	(1 << 0)
 			__u32 flags;
 		} notify;
+        /* KVM_EXIT_MEMORY_FAULT */
+		struct {
+#define KVM_MEMORY_EXIT_FLAG_NR		(1 << 0)
+#define KVM_MEMORY_EXIT_FLAG_NW		(1 << 1)
+#define KVM_MEMORY_EXIT_FLAG_NX		(1 << 2)
+#define KVM_MEMORY_EXIT_NO_ACCESS                            \
+	(KVM_MEMORY_EXIT_FLAG_NR | KVM_MEMORY_EXIT_FLAG_NW | \
+	 KVM_MEMORY_EXIT_FLAG_NX)
+			__u64 flags;
+			__u64 gpa;
+			__u64 size;
+		} memory;
 		/* Fix the size of the union. */
 		char padding[256];
 	};
@@ -1442,6 +1455,9 @@ struct kvm_device_attr {
 #define   KVM_DEV_VFIO_GROUP_DEL	KVM_DEV_VFIO_FILE_DEL
 #define   KVM_DEV_VFIO_GROUP_SET_SPAPR_TCE		3
 
+#define KVM_DEV_HV_VTL_GROUP		    1
+#define KVM_DEV_HV_VTL_GROUP_VTLNUM		    1
+
 enum kvm_device_type {
 	KVM_DEV_TYPE_FSL_MPIC_20	= 1,
 #define KVM_DEV_TYPE_FSL_MPIC_20	KVM_DEV_TYPE_FSL_MPIC_20
@@ -1465,6 +1481,8 @@ enum kvm_device_type {
 #define KVM_DEV_TYPE_ARM_PV_TIME	KVM_DEV_TYPE_ARM_PV_TIME
 	KVM_DEV_TYPE_RISCV_AIA,
 #define KVM_DEV_TYPE_RISCV_AIA		KVM_DEV_TYPE_RISCV_AIA
+	KVM_DEV_TYPE_HV_VSM_VTL,
+#define KVM_DEV_TYPE_HV_VSM_VTL		KVM_DEV_TYPE_HV_VSM_VTL
 	KVM_DEV_TYPE_MAX,
 };
 
@@ -2269,5 +2287,20 @@ struct kvm_s390_zpci_op {
 #define KVM_S390_ZPCIOP_REGAEN_HOST    (1 << 0)
 
 #define KVM_HV_GET_VSM_STATE _IOR(KVMIO, 0xd4, struct kvm_hv_vsm_state)
+
+#define KVM_SET_MEMORY_ATTRIBUTES              _IOWR(KVMIO,  0xd3, struct kvm_memory_attributes)
+
+struct kvm_memory_attributes {
+	__u64 address;
+	__u64 size;
+	__u64 attributes;
+	__u64 flags;
+};
+
+#define KVM_MEMORY_ATTRIBUTE_READ              (1ULL << 0)
+#define KVM_MEMORY_ATTRIBUTE_WRITE             (1ULL << 1)
+#define KVM_MEMORY_ATTRIBUTE_EXECUTE           (1ULL << 2)
+#define KVM_MEMORY_ATTRIBUTE_PRIVATE           (1ULL << 3)
+#define KVM_MEMORY_ATTRIBUTE_NOT_PRESENT       (-1ULL)
 
 #endif /* __LINUX_KVM_H */

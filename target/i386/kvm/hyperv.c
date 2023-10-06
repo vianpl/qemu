@@ -55,7 +55,6 @@ static void kvm_hv_inject_ud(CPUState *c)
     X86CPU *cpu = X86_CPU(c);
     CPUX86State *env = &cpu->env;
 
-    fprintf(stderr, "%s, %d\n", __func__, __LINE__);
     kvm_cpu_synchronize_state(c);
     kvm_queue_exception(env, EXCP06_ILLOP, 0, 0);
 }
@@ -92,6 +91,11 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
          * necessary because memory hierarchy is being changed
          */
         //async_safe_run_on_cpu(CPU(cpu), async_synic_update, RUN_ON_CPU_NULL);
+        /*
+         * TODO: move back to prev. version, this only works because we're
+         * running VSM on a UP setup.
+         */
+        //async_synic_update(CPU(cpu), RUN_ON_CPU_NULL);
 
         return 0;
     }
@@ -99,20 +103,15 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
     case KVM_EXIT_HYPERV_HCALL: {
         uint16_t code = exit->u.hcall.input & 0xffff;
         bool fast = exit->u.hcall.input & HV_HYPERCALL_FAST;
-        uint16_t rep_cnt = (exit->u.hcall.input >> HV_HYPERCALL_REP_COMP_OFFSET) & 0xfff;
-        uint16_t rep_idx = (exit->u.hcall.input >> HV_HYPERCALL_REP_START_OFFSET) & 0xfff;
         uint64_t in_param = exit->u.hcall.ingpa;
         uint64_t out_param = exit->u.hcall.outgpa;
         int ret;
 
         //fprintf(stderr, "kvm_hv_handle_exit: hvcall 0x%x\n", code);
         switch (code) {
-        case HV_MODIFY_VTL_PROTECTION_MASK: {
-            uint16_t count = rep_cnt - rep_idx;
-
-            exit->u.hcall.result = hyperv_hcall_vtl_protection_mask(CPU(cpu), fast, count);
+        case HV_MODIFY_VTL_PROTECTION_MASK:
+            exit->u.hcall.result = hyperv_hcall_vtl_protection_mask(CPU(cpu), exit);
             break;
-        }
         case HV_ENABLE_PARTITION_VTL:
             exit->u.hcall.result = hyperv_hcall_vtl_enable_partition_vtl(CPU(cpu),
                 in_param, out_param, fast);
