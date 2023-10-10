@@ -212,7 +212,6 @@ struct kvm_hyperv_exit {
 		} syndbg;
         struct {
             __u32 msr; /* kernel -> user */
-            __u8 vtl; /* kernel -> user */
             __u8 error; /* user -> kernel */
             __u8 is_hypercall; /* kernel -> user */
             __u8 pad;

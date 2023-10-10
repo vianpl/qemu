@@ -73,7 +73,7 @@ int hyperv_hcall_vtl_return(CPUState *cs);
 uint64_t hyperv_hcall_get_set_vp_register(CPUState *cs, struct kvm_hyperv_exit *exit,
                                           bool set);
 
-void hyperv_setup_vp_assist(CPUState *cs, uint64_t gpa, int vtl);
+void hyperv_setup_vp_assist(CPUState *cs, uint64_t gpa);
 int kvm_hv_handle_fault(CPUState *cs, uint64_t gpa, uint64_t size, uint64_t flags);
 
 /*

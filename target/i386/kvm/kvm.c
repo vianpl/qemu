@@ -1044,7 +1044,7 @@ static struct {
        .desc = "VSM support",
        .flags = {
            {.func = HV_CPUID_FEATURES, .reg = R_EBX,
-            .bits = HV_ACCESS_VSM | HV_ACCESS_VP_REGISTERS | HV_START_VIRTUAL_PROCESSOR},
+            .bits = HV_ACCESS_VSM | HV_ACCESS_VP_REGISTERS},
        },
        .dependencies = BIT(HYPERV_FEAT_SYNIC)
     },

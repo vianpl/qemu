@@ -198,12 +198,11 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
     return 0;
 
     case KVM_EXIT_HYPERV_OVERLAY: {
-        fprintf(stderr, "overlay msr 0x%x, vtl %d, gpa 0x%llx\n",
-                exit->u.overlay.msr, exit->u.overlay.vtl, exit->u.overlay.gpa);
+        fprintf(stderr, "overlay msr 0x%x, gpa 0x%llx\n",
+                exit->u.overlay.msr, exit->u.overlay.gpa);
         switch (exit->u.overlay.msr) {
         case HV_X64_MSR_APIC_ASSIST_PAGE:
-            hyperv_setup_vp_assist(CPU(cpu), exit->u.overlay.gpa,
-                                 exit->u.overlay.vtl);
+            hyperv_setup_vp_assist(CPU(cpu), exit->u.overlay.gpa);
           break;
         default:
             return 0;

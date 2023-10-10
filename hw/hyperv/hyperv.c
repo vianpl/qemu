@@ -1141,6 +1141,7 @@ static void hyperv_create_vtl_device(KVMState *kvm_state, int vtl)
         if (kvm_device_access(*fd, KVM_DEV_HV_VTL_GROUP,
                               KVM_DEV_HV_VTL_GROUP_VTLNUM, &tmp, false,
                               &error_abort)) {
+            printf("Failed to get VTL from VSM device\n");
             exit(1);
         }
 
@@ -1327,7 +1328,7 @@ unmap:
     return ret;
 }
 
-void hyperv_setup_vp_assist(CPUState *cs, uint64_t data, int vtl)
+void hyperv_setup_vp_assist(CPUState *cs, uint64_t data)
 {
     VpVsmState *vpvsm = get_vp_vsm(cs);
     hwaddr gpa = data & HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_MASK;
@@ -1335,11 +1336,6 @@ void hyperv_setup_vp_assist(CPUState *cs, uint64_t data, int vtl)
     bool enable = !!(data & HV_X64_MSR_VP_ASSIST_PAGE_ENABLE);
 
     trace_hyperv_setup_vp_assist(hyperv_vp_index(cs), get_active_vtl(cs), enable, gpa);
-
-    if (vtl != get_active_vtl(cs)) {
-        printf("VP assist vtl doesn't matche's vCPU\n");
-        return;
-    }
 
     if (!vpvsm)
         return;
@@ -1781,7 +1777,7 @@ static uint64_t set_vp_register(uint32_t name, struct hv_vp_register_val *val,
         break;
     case HV_REGISTER_VP_ASSIST_PAGE:
         env->msr_hv_vapic = val->low;
-        hyperv_setup_vp_assist(target_vcpu, val->low, get_active_vtl(target_vcpu));
+        hyperv_setup_vp_assist(target_vcpu, val->low);
         break;
     case HV_REGISTER_VSM_VINA:
     case HV_X64_REGISTER_CR_INTERCEPT_CONTROL:
