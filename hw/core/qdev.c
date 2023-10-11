@@ -653,10 +653,10 @@ static void device_initfn(Object *obj)
 {
     DeviceState *dev = DEVICE(obj);
 
-    if (phase_check(PHASE_MACHINE_READY)) {
-        dev->hotplugged = 1;
-        qdev_hot_added = true;
-    }
+    /* if (phase_check(PHASE_MACHINE_READY)) { */
+        /* dev->hotplugged = 1; */
+        /* qdev_hot_added = true; */
+    /* } */
 
     dev->instance_id_alias = -1;
     dev->realized = false;
