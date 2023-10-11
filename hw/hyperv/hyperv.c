@@ -25,6 +25,8 @@
 #include "target/i386/kvm/hyperv-proto.h"
 #include "target/i386/cpu.h"
 #include "exec/cpu-all.h"
+#include "sysemu/kvm_int.h"
+#include "trace.h"
 
 struct SynICState {
     DeviceState parent_obj;
@@ -47,6 +49,13 @@ struct SynICState {
 OBJECT_DECLARE_SIMPLE_TYPE(SynICState, SYNIC)
 
 static bool synic_enabled;
+
+struct hv_vsm {
+    GHashTable *prots[HV_NUM_VTLS];
+    KVMState *s[HV_NUM_VTLS];
+    MemoryRegion *root[HV_NUM_VTLS];
+    AddressSpace as[HV_NUM_VTLS];
+} hv_vsm;
 
 static int get_active_vtl(CPUState *cpu)
 {
@@ -593,6 +602,162 @@ int hyperv_set_msg_handler(uint32_t conn_id, HvMsgHandler handler, void *data)
     return ret;
 }
 
+union hv_register_vsm_partition_status hv_vsm_partition_status = {
+    .enabled_vtl_set = 1 << 0, /* VTL0 is enabled */
+    .maximum_vtl = HV_NUM_VTLS - 1,
+};
+
+union hv_register_vsm_capabilities hv_vsm_partition_capabilities = {
+    .dr6_shared = 0,
+};
+
+union hv_register_vsm_partition_config hv_vsm_partition_config[HV_NUM_VTLS];
+
+static void hyperv_vsm_sync_kvm_clock(KVMState *target_state, KVMState *vtl_state)
+{
+    struct kvm_clock_data data;
+    int ret;
+
+    ret = kvm_vm_ioctl(target_state, KVM_GET_CLOCK, &data);
+    if (ret < 0) {
+        fprintf(stderr, "KVM_GET_CLOCK failed: %s\n", strerror(-ret));
+                abort();
+    }
+
+    ret = kvm_vm_ioctl(vtl_state, KVM_SET_CLOCK, &data);
+    if (ret < 0) {
+        fprintf(stderr, "KVM_SET_CLOCK failed: %s\n", strerror(-ret));
+        abort();
+    }
+}
+
+static void vsm_memory_listener_register(const char *name, int vtl)
+{
+    KVMState *s = hv_vsm.s[vtl];
+    KVMMemoryListener *kml = &s->memory_listener;
+    int i;
+
+    kml->slots = g_new0(KVMSlot, s->nr_slots);
+    kml->as_id = 0;
+
+    for (i = 0; i < s->nr_slots; i++)
+        kml->slots[i].slot = i;
+
+    QSIMPLEQ_INIT(&kml->transaction_add);
+    QSIMPLEQ_INIT(&kml->transaction_del);
+
+    kml->s = s;
+    kml->listener.region_add = kvm_region_add;
+    kml->listener.region_del = kvm_region_del;
+    kml->listener.commit = kvm_region_commit;
+    kml->listener.priority = MEMORY_LISTENER_PRIORITY_ACCEL;
+    kml->listener.name = name;
+
+    memory_listener_register(&kml->listener, &hv_vsm.as[vtl]);
+}
+
+static int hyperv_kvm_init_vsm(int vtl)
+{
+    MachineState *ms = MACHINE(qdev_get_machine());
+    MemoryRegion *ram_below_4g, *ram_above_4g;
+    X86MachineState *x86ms = X86_MACHINE(ms);
+    AccelClass *ac = accel_find("kvm");
+    int ret;
+
+    hv_vsm.s[vtl] = KVM_STATE(object_new_with_class(OBJECT_CLASS(ac)));
+    object_apply_compat_props(OBJECT(hv_vsm.s[vtl]));
+    ret = kvm_init_companion_vm(ms, hv_vsm.s[vtl - 1], hv_vsm.s[vtl]);
+    if (ret)
+        return ret;
+
+    hv_vsm.s[vtl]->as = g_new0(struct KVMAs, 1);
+    hv_vsm.s[vtl]->as->ml = &hv_vsm.s[vtl]->memory_listener;
+    hv_vsm.s[vtl]->as->as = &hv_vsm.as[vtl];
+    hv_vsm.root[0] = get_system_memory();
+
+    /* Outer container */
+    hv_vsm.root[vtl] = g_malloc(sizeof(*hv_vsm.root[0]));
+
+    bql_lock();
+    memory_region_init(hv_vsm.root[vtl], NULL, "vsm-memory", UINT64_MAX);
+
+    /* With one region inside */
+    ram_below_4g = g_malloc(sizeof(*ram_below_4g));
+    memory_region_init_alias(ram_below_4g, NULL, "ram-below-4g", ms->ram,
+                             0, x86ms->below_4g_mem_size);
+    memory_region_add_subregion(hv_vsm.root[vtl], 0, ram_below_4g);
+    if (x86ms->above_4g_mem_size > 0) {
+        ram_above_4g = g_malloc(sizeof(*ram_above_4g));
+        memory_region_init_alias(ram_above_4g, NULL, "ram-above-4g",
+                                 ms->ram, x86ms->below_4g_mem_size,
+                                 x86ms->above_4g_mem_size);
+        memory_region_add_subregion(hv_vsm.root[vtl], x86ms->above_4g_mem_start,
+                                    ram_above_4g);
+    }
+
+    address_space_init(&hv_vsm.as[vtl], hv_vsm.root[vtl], "vsm-memory");
+    vsm_memory_listener_register("vsm-memory", vtl);
+    bql_unlock();
+
+    hyperv_vsm_sync_kvm_clock(hv_vsm.s[vtl - 1], hv_vsm.s[vtl]);
+
+    hv_vsm.prots[vtl - 1] = g_hash_table_new(g_direct_hash, g_direct_equal);
+
+    return 0;
+}
+
+uint16_t hyperv_hcall_vtl_enable_partition_vtl(CPUState *cs, uint64_t param1,
+                                               uint64_t param2, bool fast)
+{
+    union hv_enable_partition_vtl input;
+    uint8_t highest_enabled_vtl;
+
+    // TODO: Implement not fast args
+    if (!fast)
+        return HV_STATUS_INVALID_HYPERCALL_CODE;
+
+    input.as_u64[0] = param1;
+    input.as_u64[1] = param2;
+
+    trace_hyperv_hcall_vtl_enable_partition_vtl(
+        input.target_partition_id, input.target_vtl, input.flags.as_u8);
+
+    /* Only self-targeting is supported */
+    if (input.target_partition_id != HV_PARTITION_ID_SELF)
+        return HV_STATUS_INVALID_PARTITION_ID;
+
+    /* We don't declare MBEC support */
+    if (input.flags.enable_mbec != 0)
+        return HV_STATUS_INVALID_PARAMETER;
+
+    /* Check that target VTL is sane */
+    if (input.target_vtl > hv_vsm_partition_status.maximum_vtl)
+        return HV_STATUS_INVALID_PARAMETER;
+
+    /* Is target VTL already enabled? */
+    if (hv_vsm_partition_status.enabled_vtl_set & (1ul << input.target_vtl))
+        return HV_STATUS_INVALID_PARAMETER;
+
+    /*
+    * Requestor VP should be running on VTL higher or equal to the new one or
+    * at the highest VTL enabled for partition overall if the new one is higher
+    * than that
+    */
+    highest_enabled_vtl = fls(hv_vsm_partition_status.enabled_vtl_set) - 1;
+    if (get_active_vtl(cs) < input.target_vtl &&
+        get_active_vtl(cs) != highest_enabled_vtl)
+      return HV_STATUS_INVALID_PARAMETER;
+
+    if (!get_active_vtl(cs))
+        hv_vsm.s[0] = cs->kvm_state;
+
+    /* Create new KVM VM */
+    if (hyperv_kvm_init_vsm(input.target_vtl))
+        return HV_STATUS_INVALID_PARAMETER;
+
+    hv_vsm_partition_status.enabled_vtl_set |= (1ul << input.target_vtl);
+    return HV_STATUS_SUCCESS;
+}
 uint16_t hyperv_hcall_post_message(uint64_t param, bool fast)
 {
     uint16_t ret;

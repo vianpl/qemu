@@ -2618,6 +2618,54 @@ err:
     return ret;
 }
 
+int kvm_init_companion_vm(MachineState *ms, KVMState *main, KVMState *comp)
+{
+    int ret;
+
+    comp->fd = main->fd;
+
+    do {
+        ret = kvm_ioctl(comp, KVM_CREATE_VM, 0);
+    } while (ret == -EINTR);
+
+    if (ret < 0) {
+        fprintf(stderr, "ioctl(KVM_CREATE_VM) failed: %d %s\n", -ret,
+                strerror(-ret));
+        return ret;
+    }
+
+    comp->nr_slots = main->nr_slots;
+    comp->vmfd = ret;
+    comp->coalesced_mmio = main->coalesced_mmio;
+    comp->coalesced_pio = main->coalesced_pio;
+    comp->vcpu_events = main->vcpu_events;
+    comp->max_nested_state_len = main->max_nested_state_len;
+    comp->kvm_shadow_mem = main->kvm_shadow_mem;
+    comp->kernel_irqchip_allowed = main->kernel_irqchip_allowed;
+    comp->kernel_irqchip_required = main->kernel_irqchip_required;
+    comp->kernel_irqchip_split = main->kernel_irqchip_split;
+    comp->kernel_irqchip_split = main->kernel_irqchip_split;
+    comp->sync_mmu = main->sync_mmu;
+    comp->irq_set_ioctl = main->irq_set_ioctl;
+    comp->sigmask_len = main->sigmask_len;
+    comp->nr_as = main->nr_as;
+    comp->notify_vmexit = main->notify_vmexit;
+    comp->notify_window = main->notify_window;
+
+    bql_lock();
+    ret = kvm_arch_init(ms, comp);
+    if (ret) {
+        printf("Failed to init arch for companion VM, %d\n", ret);
+        return ret;
+    }
+    bql_unlock();
+
+    if (comp->kernel_irqchip_allowed)
+        kvm_irqchip_create(comp);
+
+    return 0;
+}
+
 void kvm_set_sigmask_len(KVMState *s, unsigned int sigmask_len)
 {
     s->sigmask_len = sigmask_len;
