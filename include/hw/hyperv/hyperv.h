@@ -62,6 +62,7 @@ int hyperv_set_msg_handler(uint32_t conn_id, HvMsgHandler handler, void *data);
 int hyperv_set_event_flag_handler(uint32_t conn_id, EventNotifier *notifier);
 
 int hyperv_init_vsm(CPUState *cs);
+uint64_t hyperv_hcall_vtl_protection_mask(CPUState *cs, struct kvm_hyperv_exit *exit);
 uint16_t hyperv_hcall_vtl_enable_partition_vtl(CPUState *cs, uint64_t param1,
                                                uint64_t param2, bool fast);
 int hyperv_vcpu_event_callback(CPUState *cpu);
@@ -70,6 +71,10 @@ int hyperv_hcall_vtl_return(CPUState *cs);
 uint64_t hyperv_hcall_get_set_vp_register(CPUState *cs, struct kvm_hyperv_exit *exit,
                                           bool set);
 uint16_t hyperv_hcall_vtl_enable_vp_vtl(CPUState *cs, uint64_t param, bool fast);
+
+int kvm_hv_handle_fault(CPUState *cs, uint64_t gpa, uint64_t size,
+                        uint64_t flags, uint8_t exit_instruction_len);
+
 
 /*
  * Process HV_POST_MESSAGE hypercall: parse the data in the guest memory as

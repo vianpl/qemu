@@ -107,6 +107,9 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
         int ret;
 
         switch (code) {
+        case HV_MODIFY_VTL_PROTECTION_MASK:
+            exit->u.hcall.result = hyperv_hcall_vtl_protection_mask(CPU(cpu), exit);
+            break;
         case HV_ENABLE_PARTITION_VTL:
             exit->u.hcall.result = hyperv_hcall_vtl_enable_partition_vtl(CPU(cpu),
                 in_param, out_param, fast);
