@@ -12,6 +12,7 @@
 
 #include "cpu-qom.h"
 #include "hw/hyperv/hyperv-proto.h"
+#include "cpu.h"
 
 typedef struct HvSintRoute HvSintRoute;
 
@@ -60,6 +61,8 @@ int hyperv_set_event_flag_handler(uint32_t conn_id, EventNotifier *notifier);
 
 uint16_t hyperv_hcall_vtl_enable_partition_vtl(CPUState *cs, uint64_t param1,
                                                uint64_t param2, bool fast);
+
+uint16_t hyperv_hcall_vtl_enable_vp_vtl(CPUState *cs, uint64_t param, bool fast);
 /*
  * Process HV_POST_MESSAGE hypercall: parse the data in the guest memory as
  * specified in @param, and call the HvMsgHandler associated with the
@@ -74,7 +77,19 @@ uint16_t hyperv_hcall_signal_event(uint64_t param, bool fast);
 
 static inline uint32_t hyperv_vp_index(CPUState *cs)
 {
-    return cs->cpu_index;
+    return x86_get_phys_apic_id(cs->cpu_index);
+}
+
+static inline int hyperv_vsm_vp_index(CPUState *cs)
+{
+    return hyperv_vp_index(cs);
+}
+
+static inline CPUState *hyperv_vsm_vcpu(uint32_t vp_index, uint32_t vtl)
+{
+    CPUState *cs = cpu_by_arch_id(x86_apic_id_set_group(vp_index, vtl));
+    assert(cs);
+    return cs;
 }
 
 void hyperv_synic_add(CPUState *cs);
