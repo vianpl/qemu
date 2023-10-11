@@ -113,7 +113,7 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
         return 0;
     }
 
-    case KVM_EXIT_HYPERV_SYNDBG:
+    case KVM_EXIT_HYPERV_SYNDBG: {
         if (!hyperv_feat_enabled(cpu, HYPERV_FEAT_SYNDBG)) {
             return -1;
         }
@@ -145,6 +145,21 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
         }
 
         return 0;
+    }
+
+    case KVM_EXIT_HYPERV_OVERLAY: {
+        switch (exit->u.overlay.msr) {
+        case HV_X64_MSR_APIC_ASSIST_PAGE:
+        case HV_X64_MSR_GUEST_OS_ID:
+        case HV_X64_MSR_HYPERCALL:
+            break;
+        default:
+            return -1;
+        }
+
+        return 0;
+    }
+
     default:
         return -1;
     }
