@@ -1666,6 +1666,13 @@ static int hyperv_init_vcpu(X86CPU *cpu)
         }
     }
 
+    if (hyperv_feat_enabled(cpu, HYPERV_FEAT_VSM)) {
+        if (hyperv_x86_vsm_init(cpu)) {
+            error_report("kvm: Failed to init VSM state on cpu %d", hyperv_vp_index(cs));
+            return -1;
+        }
+    }
+
     /* Skip SynIC and VP_INDEX since they are hard deps already */
     if (hyperv_feat_enabled(cpu, HYPERV_FEAT_STIMER) &&
         hyperv_feat_enabled(cpu, HYPERV_FEAT_VAPIC) &&

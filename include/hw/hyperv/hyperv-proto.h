@@ -13,6 +13,7 @@
 #include "qemu/bitmap.h"
 
 #define HV_PARTITION_ID_SELF		((uint64_t)-1)
+#define HV_VP_INDEX_SELF		    ((uint32_t)-2)
 
 //TODO: 16?
 #define HV_NUM_VTLS		2
@@ -37,6 +38,7 @@
  * Hypercall numbers
  */
 #define HV_ENABLE_PARTITION_VTL               0x000d
+#define HV_ENABLE_VP_VTL			          0x000f
 #define HV_POST_MESSAGE                       0x005c
 #define HV_SIGNAL_EVENT                       0x005d
 #define HV_POST_DEBUG_DATA                    0x0069
@@ -124,6 +126,26 @@ struct hyperv_message {
     uint8_t payload[HV_MESSAGE_PAYLOAD_SIZE];
 };
 
+struct hv_x64_segment_register {
+	uint64_t base;
+	uint32_t limit;
+	uint16_t selector;
+	union {
+		struct {
+			uint16_t segment_type : 4;
+			uint16_t non_system_segment : 1;
+			uint16_t descriptor_privilege_level : 2;
+			uint16_t present : 1;
+			uint16_t reserved : 4;
+			uint16_t available : 1;
+			uint16_t _long : 1;
+			uint16_t _default : 1;
+			uint16_t granularity : 1;
+		} __attribute__ ((__packed__));
+		uint16_t attributes;
+	};
+} __attribute__ ((__packed__));
+
 struct hyperv_message_page {
     struct hyperv_message slot[HV_SINT_COUNT];
 };
@@ -185,5 +207,14 @@ struct hyperv_retrieve_debug_data_input {
 struct hyperv_retrieve_debug_data_output {
     uint32_t retrieved_count;
     uint32_t remaining_count;
+} __attribute__ ((__packed__));
+
+union hv_input_vtl {
+	uint8_t as_uint8;
+	struct {
+		uint8_t target_vtl: 4;
+		uint8_t use_target_vtl: 1;
+		uint8_t reserved_z: 3;
+	};
 } __attribute__ ((__packed__));
 #endif
