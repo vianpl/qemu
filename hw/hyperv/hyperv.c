@@ -29,6 +29,7 @@
 #include "exec/cpu-all.h"
 #include "kvm/kvm_i386.h"
 #include "sysemu/hw_accel.h"
+#include "sysemu/cpus.h"
 #include "cpu.h"
 #include "trace.h"
 
@@ -617,8 +618,18 @@ struct VpVsmState {
     union hv_register_vsm_vp_status vsm_vp_status;
     union hv_register_vsm_vp_secure_vtl_config vsm_vtl_config[HV_NUM_VTLS];
     void *vp_assist;
+    struct kvm_hv_vcpu_per_vtl_state priv_state;
 };
 
+static CPUState *hyperv_get_next_vtl(CPUState *cs)
+{
+    return hyperv_vsm_vcpu(hyperv_vsm_vp_index(cs), get_active_vtl(cs) + 1);
+}
+
+static CPUState *hyperv_get_prev_vtl(CPUState *cs)
+{
+    return hyperv_vsm_vcpu(hyperv_vsm_vp_index(cs), get_active_vtl(cs) - 1);
+}
 
 #define TYPE_VP_VSM "hyperv-vp-vsm"
 OBJECT_DECLARE_SIMPLE_TYPE(VpVsmState, VP_VSM)
@@ -696,6 +707,242 @@ static void hyperv_set_vtl_cpu_state(CPUX86State *env, struct hv_init_vp_context
      */
     env->gsbase = c->gs.base;
     env->fsbase = c->fs.base;
+}
+
+static void hyperv_save_priv_vtl_state(CPUState *cs)
+{
+    X86CPU *cpu = X86_CPU(cs);
+    CPUX86State *env = &cpu->env;
+    VpVsmState *vpvsm = get_vp_vsm(cs);
+    struct kvm_hv_vcpu_per_vtl_state *priv_state = &vpvsm->priv_state;
+    struct hv_x64_segment_register rhs;
+
+    priv_state->msr_kernel_gsbase = env->kernelgsbase;
+    priv_state->msr_gsbase = env->gsbase;
+    priv_state->msr_fsbase = env->fsbase;
+    priv_state->msr_tsc_aux = env->tsc_aux;
+    priv_state->msr_sysenter_cs = env->sysenter_cs;
+    priv_state->msr_sysenter_esp = env->sysenter_esp;
+    priv_state->msr_sysenter_eip = env->sysenter_eip;
+    priv_state->msr_star = env->star;
+    priv_state->msr_lstar = env->lstar;
+    priv_state->msr_cstar = env->cstar;
+    priv_state->msr_sfmask = env->fmask;
+    priv_state->msr_cr_pat = env->pat;
+    priv_state->msr_hv_synic_control = env->msr_hv_synic_control;
+    priv_state->msr_hv_synic_evt_page = env->msr_hv_synic_evt_page;
+    priv_state->msr_hv_synic_msg_page = env->msr_hv_synic_msg_page;
+    for (int i = 0; i < HV_SINT_COUNT; i++)
+        priv_state->msr_hv_synic_sint[i] = env->msr_hv_synic_sint[i];
+    for (int i = 0; i < HV_STIMER_COUNT; i++)
+        priv_state->msr_hv_stimer_config[i] = env->msr_hv_stimer_config[i];
+    for (int i = 0; i < HV_STIMER_COUNT; i++)
+        priv_state->msr_hv_stimer_count[i] = env->msr_hv_stimer_count[i];
+    priv_state->msr_hv_guest_os_id = env->msr_hv_guest_os_id;
+    priv_state->msr_hv_hypercall = env->msr_hv_hypercall;
+    priv_state->msr_hv_tsc = env->msr_hv_tsc;
+    priv_state->msr_hv_vp_assist = env->msr_hv_vapic;
+
+    priv_state->rip = env->eip;
+    priv_state->rsp = env->regs[R_ESP];
+    priv_state->rflags = env->eflags;
+    priv_state->efer = env->efer;
+    priv_state->cr0 = env->cr[0];
+    priv_state->cr3 = env->cr[3];
+    priv_state->cr4 = env->cr[4];
+    priv_state->dr7 = env->dr[7];
+
+    hyperv_get_seg(&env->segs[R_CS], &rhs);
+    memcpy(&priv_state->cs, &rhs, sizeof(priv_state->cs));
+    hyperv_get_seg(&env->segs[R_DS], &rhs);
+    memcpy(&priv_state->ds, &rhs, sizeof(priv_state->ds));
+    hyperv_get_seg(&env->segs[R_ES], &rhs);
+    memcpy(&priv_state->es, &rhs, sizeof(priv_state->es));
+    hyperv_get_seg(&env->segs[R_FS], &rhs);
+    memcpy(&priv_state->fs, &rhs, sizeof(priv_state->fs));
+    hyperv_get_seg(&env->segs[R_GS], &rhs);
+    memcpy(&priv_state->gs, &rhs, sizeof(priv_state->gs));
+    hyperv_get_seg(&env->segs[R_SS], &rhs);
+    memcpy(&priv_state->ss, &rhs, sizeof(priv_state->ss));
+    hyperv_get_seg(&env->tr, &rhs);
+    memcpy(&priv_state->tr, &rhs, sizeof(priv_state->tr));
+    hyperv_get_seg(&env->ldt, &rhs);
+    memcpy(&priv_state->ldtr, &rhs, sizeof(priv_state->ldtr));
+
+    priv_state->idtr.limit = env->idt.limit;
+    priv_state->idtr.base = env->idt.base;
+    priv_state->gdtr.limit = env->gdt.limit;
+    priv_state->gdtr.base = env->gdt.base;
+
+    priv_state->exception_nr = env->exception_nr;
+    priv_state->interrupt_injected = env->interrupt_injected;
+    priv_state->soft_interrupt = env->soft_interrupt;
+    priv_state->exception_pending = env->exception_pending;
+    priv_state->exception_injected = env->exception_injected;
+    priv_state->has_error_code = env->has_error_code;
+    priv_state->exception_has_payload = env->exception_has_payload;
+    priv_state->exception_payload = env->exception_payload;
+    priv_state->triple_fault_pending = env->triple_fault_pending;
+    priv_state->ins_len = env->ins_len;
+    priv_state->sipi_vector = env->sipi_vector;
+}
+
+static void hyperv_restore_priv_vtl_state(CPUState *cs)
+{
+    X86CPU *cpu = X86_CPU(cs);
+    CPUX86State *env = &cpu->env;
+    VpVsmState *vpvsm = get_vp_vsm(cs);
+    struct kvm_hv_vcpu_per_vtl_state *priv_state = &vpvsm->priv_state;
+	struct hv_init_vp_context ctx;
+    uint64_t val;
+
+	env->kernelgsbase = priv_state->msr_kernel_gsbase;
+	env->gsbase = priv_state->msr_gsbase;
+	env->fsbase = priv_state->msr_fsbase;
+	env->tsc_aux = priv_state->msr_tsc_aux;
+	env->sysenter_cs = priv_state->msr_sysenter_cs;
+	env->sysenter_esp = priv_state->msr_sysenter_esp;
+	env->sysenter_eip = priv_state->msr_sysenter_eip;
+	env->star = priv_state->msr_star;
+	env->lstar = priv_state->msr_lstar;
+	env->cstar = priv_state->msr_cstar;
+	env->fmask = priv_state->msr_sfmask;
+    env->msr_hv_synic_control = priv_state->msr_hv_synic_control;
+    env->msr_hv_synic_evt_page = priv_state->msr_hv_synic_evt_page;
+    env->msr_hv_synic_msg_page = priv_state->msr_hv_synic_msg_page;
+    for (int i = 0; i < HV_SINT_COUNT; i++)
+        env->msr_hv_synic_sint[i] = priv_state->msr_hv_synic_sint[i];
+    for (int i = 0; i < HV_STIMER_COUNT; i++)
+        env->msr_hv_stimer_config[i] = priv_state->msr_hv_stimer_config[i];
+    for (int i = 0; i < HV_STIMER_COUNT; i++)
+        env->msr_hv_stimer_count[i] = priv_state->msr_hv_stimer_count[i];
+    env->msr_hv_guest_os_id = priv_state->msr_hv_guest_os_id;
+    env->msr_hv_hypercall = priv_state->msr_hv_hypercall;
+    env->msr_hv_tsc = priv_state->msr_hv_tsc;
+    env->msr_hv_vapic = priv_state->msr_hv_vp_assist;
+
+    env->exception_nr = priv_state->exception_nr;
+    env->interrupt_injected = priv_state->interrupt_injected;
+    env->soft_interrupt = priv_state->soft_interrupt;
+    env->exception_pending = priv_state->exception_pending;
+    env->exception_injected = priv_state->exception_injected;
+    env->has_error_code = priv_state->has_error_code;
+    env->exception_has_payload = priv_state->exception_has_payload;
+    env->exception_payload = priv_state->exception_payload;
+    env->triple_fault_pending = priv_state->triple_fault_pending;
+    env->ins_len = priv_state->ins_len;
+    env->sipi_vector = priv_state->sipi_vector;
+
+	memset(&ctx, 0, sizeof(struct hv_init_vp_context));
+
+	ctx.rip = priv_state->rip;
+	ctx.rsp = priv_state->rsp;
+	ctx.rflags = priv_state->rflags;
+	ctx.efer = priv_state->efer;
+	ctx.cr0 = priv_state->cr0;
+	ctx.cr3 = priv_state->cr3;
+	ctx.cr4 = priv_state->cr4;
+	ctx.msr_cr_pat = priv_state->msr_cr_pat;
+
+	memcpy(&ctx.cs, &priv_state->cs, sizeof(priv_state->cs));
+	memcpy(&ctx.ds, &priv_state->ds, sizeof(priv_state->ds));
+	memcpy(&ctx.es, &priv_state->es, sizeof(priv_state->es));
+	memcpy(&ctx.fs, &priv_state->fs, sizeof(priv_state->fs));
+	memcpy(&ctx.gs, &priv_state->gs, sizeof(priv_state->gs));
+	memcpy(&ctx.ss, &priv_state->ss, sizeof(priv_state->ss));
+	memcpy(&ctx.tr, &priv_state->tr, sizeof(priv_state->tr));
+	memcpy(&ctx.ldtr, &priv_state->ldtr, sizeof(priv_state->ldtr));
+	memcpy(&ctx.idtr, &priv_state->idtr, sizeof(priv_state->idtr));
+	memcpy(&ctx.gdtr, &priv_state->gdtr, sizeof(priv_state->gdtr));
+
+    ctx.idtr.limit = priv_state->idtr.limit;
+    ctx.idtr.base = priv_state->idtr.base;
+    ctx.gdtr.limit = priv_state->gdtr.limit;
+    ctx.gdtr.base = priv_state->gdtr.base;
+
+    /* Force BSP bit in vCPU 0 */
+    //TODO Fix this on non-UP
+    val = cpu_get_apic_base(cpu->apic_state);
+    val |= MSR_IA32_APICBASE_BSP;
+    cpu_set_apic_base(cpu->apic_state, val);
+
+    hyperv_set_vtl_cpu_state(env, &ctx);
+}
+
+static void hv_read_vtl_control(CPUState *cs, struct hv_vp_vtl_control *vtl_control)
+{
+    VpVsmState *vpvsm = get_vp_vsm(cs);
+
+    if (!vpvsm->vp_assist) {
+        printf("BUG calling %s with null vp_assist pointer\n", __func__);
+        return;
+    }
+
+    memcpy(vtl_control,
+           vpvsm->vp_assist + offsetof(struct hv_vp_assist_page, vtl_control),
+           sizeof(*vtl_control));
+}
+
+static void hv_write_vtl_control(CPUState *cs, struct hv_vp_vtl_control *vtl_control)
+{
+    VpVsmState *vpvsm = get_vp_vsm(cs);
+
+    if (!vpvsm->vp_assist) {
+        printf("BUG calling %s with null vp_assist pointer\n", __func__);
+        return;
+    }
+
+    memcpy(vpvsm->vp_assist + offsetof(struct hv_vp_assist_page, vtl_control),
+           vtl_control, sizeof(*vtl_control));
+}
+
+static bool hyperv_hv_assist_page_enabled(CPUState *cs)
+{
+    VpVsmState *vpvsm = get_vp_vsm(cs);
+
+    if (!vpvsm)
+        return false;
+
+    return !!(vpvsm->vp_assist);
+}
+
+enum hv_vtl_entry_reason {
+	HV_VTL_ENTRY_RESERVED = 0,
+	HV_VTL_ENTRY_VTL_CALL = 1,
+	HV_VTL_ENTRY_INTERRUPT = 2,
+};
+
+static void set_vtl_entry_reason(CPUState *prev_cs, CPUState *next_cs,
+                                 enum hv_vtl_entry_reason reason)
+{
+    X86CPU *cpu = X86_CPU(prev_cs);
+    CPUX86State *prev_env = &cpu->env;
+    struct hv_vp_vtl_control vtl_control;
+
+    if (!hyperv_hv_assist_page_enabled(next_cs))
+        return;
+
+    vtl_control = (struct hv_vp_vtl_control) {
+            .vtl_entry_reason = reason,
+            .vtl_ret_x64rax = prev_env->regs[R_EAX],
+            .vtl_ret_x64rcx = prev_env->regs[R_ECX],
+    };
+
+    hv_write_vtl_control(next_cs, &vtl_control);
+}
+
+static void restore_regs_from_vtl_control(CPUState *prev_cs, CPUState *next_cs)
+{
+    struct hv_vp_vtl_control vtl_control;
+    X86CPU *cpu = X86_CPU(next_cs);
+    CPUX86State *env = &cpu->env;
+
+    if (!hyperv_hv_assist_page_enabled(prev_cs))
+        return;
+
+    hv_read_vtl_control(prev_cs, &vtl_control);
+    env->regs[R_EAX] = vtl_control.vtl_ret_x64rax;
+    env->regs[R_ECX] = vtl_control.vtl_ret_x64rcx;
 }
 
 static void vp_vsm_realize(DeviceState *dev, Error **errp)
@@ -815,6 +1062,7 @@ static CPUState* hyperv_init_vtl_vcpu(CPUState *cpu, int32_t vp_index, unsigned 
     x86_cpu_new(x86ms, x86_apic_id_set_group(vp_index, vtl), &error_warn);
     qemu_mutex_unlock_iothread();
     new_cpu = hyperv_vsm_vcpu(vp_index, vtl);
+    new_cpu->poll_callback = hyperv_poll_callback;
     return new_cpu;
 }
 
@@ -949,6 +1197,111 @@ void hyperv_setup_vp_assist(CPUState *cs, uint64_t data)
         printf("Failed to map VP assit page");
         return;
     }
+}
+
+#define VTL_INTERRUPT_PENDING   BIT(0)
+#define VTL_CALL_PENDING        BIT(1)
+
+static unsigned int vtl_event_state;
+static bool vtl_event_handled;
+
+static void do_vtl1_entry(CPUState *vtl1, run_on_cpu_data arg)
+{
+    CPUX86State *vtl1_env = &X86_CPU(vtl1)->env;
+    CPUState *vtl0 = hyperv_get_prev_vtl(vtl1);
+    CPUX86State *vtl0_env = &X86_CPU(vtl0)->env;
+
+    hyperv_save_priv_vtl_state(vtl1);
+    memcpy(vtl1_env, vtl0_env, sizeof(*vtl1_env));
+    hyperv_restore_priv_vtl_state(vtl1);
+    set_vtl_entry_reason(vtl0, vtl1, vtl_event_state & VTL_CALL_PENDING ?
+                         HV_VTL_ENTRY_VTL_CALL : HV_VTL_ENTRY_INTERRUPT);
+    cpu_synchronize_post_reset(vtl1);
+    vtl1->stop = false;
+    vtl1->stopped = false;
+}
+
+static void do_vtl0_upcall(CPUState *vtl0, run_on_cpu_data arg)
+{
+    CPUState *vtl1 = hyperv_get_next_vtl(vtl0);
+
+    if (vtl_event_handled)
+        return;
+
+    cpu_synchronize_state(vtl0);
+    vtl_event_handled = true;
+    vtl0->stop = true;
+    async_run_on_cpu(vtl1, do_vtl1_entry, RUN_ON_CPU_NULL);
+}
+
+static void do_vtl0_downcall(CPUState *vtl0, run_on_cpu_data arg)
+{
+    CPUX86State *vtl0_env = &X86_CPU(vtl0)->env;
+    CPUState *vtl1 = hyperv_get_next_vtl(vtl0);
+    CPUX86State *vtl1_env = &X86_CPU(vtl1)->env;
+
+    hyperv_save_priv_vtl_state(vtl0);
+    memcpy(vtl0_env, vtl1_env, sizeof(*vtl1_env));
+    hyperv_restore_priv_vtl_state(vtl0);
+    restore_regs_from_vtl_control(vtl1, vtl0);
+    cpu_synchronize_post_reset(vtl0);
+    vtl_event_handled = false;
+    vtl_event_state = 0;
+    vtl0->stop = false;
+    vtl0->stopped = false;
+}
+
+int hyperv_hcall_vtl_call(CPUState *vtl0)
+{
+    CPUState *vtl1 = hyperv_get_next_vtl(vtl0);
+
+    trace_hyperv_hcall_vtl_call(get_active_vtl(vtl0),
+                                get_active_vtl(vtl1));
+
+    /* vtl1 wasn't initialized? */
+    if (!vtl1)
+        return -1;
+
+    /* We only support vtl0<->vtl1 */
+    if (get_active_vtl(vtl0) > 1)
+        return -1;
+
+    vtl0->stop = true;
+    qatomic_or(&vtl_event_state, VTL_CALL_PENDING);
+    async_run_on_cpu(vtl0, do_vtl0_upcall, RUN_ON_CPU_NULL);
+
+    return EXCP_HALTED;
+}
+
+int hyperv_hcall_vtl_return(CPUState *vtl1)
+{
+    CPUState *vtl0 = hyperv_get_prev_vtl(vtl1);
+
+    trace_hyperv_hcall_vtl_return(get_active_vtl(vtl1),
+                                  get_active_vtl(vtl0), 0);
+    vtl1->stop = true;
+    vtl1->poll = true;
+    cpu_synchronize_state(vtl1);
+    async_run_on_cpu(vtl0, do_vtl0_downcall, RUN_ON_CPU_NULL);
+
+    return EXCP_HALTED;
+}
+
+void hyperv_poll_callback(CPUState *vtl1, short int events)
+{
+    CPUState *vtl0 = hyperv_get_prev_vtl(vtl1);
+
+    if (!(events & POLLIN))
+        return;
+
+    vtl0->stop = true;
+    vtl1->poll = false;
+    qatomic_or(&vtl_event_state, VTL_INTERRUPT_PENDING);
+    async_run_on_cpu(vtl0, do_vtl0_upcall, RUN_ON_CPU_NULL);
+
+    trace_hyperv_hcall_vtl_interrupt(get_active_vtl(vtl0),
+                                     get_active_vtl(vtl1));
+
 }
 
 static bool get_vsm_vp_secure_vtl_config(CPUState *cs, uint32_t reg, uint64_t *pdata)

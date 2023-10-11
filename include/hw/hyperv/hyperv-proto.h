@@ -44,6 +44,8 @@
  */
 #define HV_ENABLE_PARTITION_VTL               0x000d
 #define HV_ENABLE_VP_VTL			          0x000f
+#define HV_VTL_CALL				              0x0011
+#define HV_VTL_RETURN				          0x0012
 #define HVCALL_GET_VP_REGISTERS	              0x0050
 #define HVCALL_SET_VP_REGISTERS			      0x0051
 #define HV_POST_MESSAGE                       0x005c
