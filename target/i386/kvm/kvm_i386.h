@@ -55,6 +55,7 @@ void kvm_synchronize_all_tsc(void);
 
 void kvm_get_apic_state(DeviceState *d, struct kvm_lapic_state *kapic);
 void kvm_put_apicbase(X86CPU *cpu, uint64_t value);
+void kvm_put_hv_vp_assist(X86CPU *cpu, uint64_t value);
 
 bool kvm_has_x2apic_api(void);
 bool kvm_has_waitpkg(void);
