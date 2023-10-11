@@ -3337,6 +3337,8 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
         kvm_msr_entry_add(cpu, MSR_KERNELGSBASE, env->kernelgsbase);
         kvm_msr_entry_add(cpu, MSR_FMASK, env->fmask);
         kvm_msr_entry_add(cpu, MSR_LSTAR, env->lstar);
+        kvm_msr_entry_add(cpu, MSR_FSBASE, env->fsbase);
+        kvm_msr_entry_add(cpu, MSR_GSBASE, env->gsbase);
     }
 #endif
 
@@ -3809,6 +3811,8 @@ static int kvm_get_msrs(X86CPU *cpu)
         kvm_msr_entry_add(cpu, MSR_KERNELGSBASE, 0);
         kvm_msr_entry_add(cpu, MSR_FMASK, 0);
         kvm_msr_entry_add(cpu, MSR_LSTAR, 0);
+        kvm_msr_entry_add(cpu, MSR_FSBASE, 0);
+        kvm_msr_entry_add(cpu, MSR_GSBASE, 0);
     }
 #endif
     kvm_msr_entry_add(cpu, MSR_KVM_SYSTEM_TIME, 0);
@@ -4020,6 +4024,12 @@ static int kvm_get_msrs(X86CPU *cpu)
 #ifdef TARGET_X86_64
         case MSR_CSTAR:
             env->cstar = msrs[i].data;
+            break;
+        case MSR_GSBASE:
+            env->gsbase = msrs[i].data;
+            break;
+        case MSR_FSBASE:
+            env->fsbase = msrs[i].data;
             break;
         case MSR_KERNELGSBASE:
             env->kernelgsbase = msrs[i].data;
