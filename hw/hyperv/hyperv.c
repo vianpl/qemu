@@ -584,18 +584,6 @@ static int get_active_vtl(CPUState *cpu)
     return cpu->cpu_index;
 }
 
-static CPUState *hyperv_vsm_vcpu(uint32_t vp_index, uint32_t vtl)
-{
-    CPUState *cs = qemu_get_cpu(vtl);
-    assert(hyperv_vp_index(cs) == vtl);
-    return cs;
-}
-
-static int hyperv_vsm_vp_index(CPUState *cs)
-{
-    return cs->cpu_index;
-}
-
 struct VpVsmState {
     DeviceState parent_obj;
 
