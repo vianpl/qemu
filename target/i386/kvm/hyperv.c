@@ -82,13 +82,18 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
         async_safe_run_on_cpu(CPU(cpu), async_synic_update, RUN_ON_CPU_NULL);
 
         return 0;
+
     case KVM_EXIT_HYPERV_HCALL: {
         uint16_t code = exit->u.hcall.input & 0xffff;
         bool fast = exit->u.hcall.input & HV_HYPERCALL_FAST;
-        uint64_t in_param = exit->u.hcall.params[0];
-        uint64_t out_param = exit->u.hcall.params[1];
+        uint64_t in_param = exit->u.hcall.ingpa;
+        uint64_t out_param = exit->u.hcall.outgpa;
 
         switch (code) {
+        case HV_ENABLE_PARTITION_VTL:
+            exit->u.hcall.result = hyperv_hcall_vtl_enable_partition_vtl(CPU(cpu),
+                in_param, out_param, fast);
+            break;
         case HV_POST_MESSAGE:
             exit->u.hcall.result = hyperv_hcall_post_message(in_param, fast);
             break;

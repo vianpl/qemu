@@ -1,3 +1,6 @@
+# hyperv.c
+hyperv_hcall_vtl_enable_partition_vtl(uint64_t target_partition_id, uint8_t target_vtl, uint8_t flags) "target partition id 0x%lx, target VTL %d, flags 0x%hhx"
+
 # vmbus.c
 vmbus_recv_message(uint32_t type, uint32_t size) "type %d size %d"
 vmbus_signal_event(void) ""
