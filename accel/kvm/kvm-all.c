@@ -3216,6 +3216,26 @@ int kvm_vcpu_ioctl(CPUState *cpu, int type, ...)
     return ret;
 }
 
+int kvm_vcpu_ppoll(CPUState *cpu, short int *events, const __sigset_t *set)
+{
+    struct pollfd p = {
+		.fd = cpu->kvm_fd,
+		.events = POLLIN,
+		.revents = 0
+	};
+    int ret;
+
+    trace_kvm_vcpu_ppoll(cpu->cpu_index);
+    accel_cpu_ioctl_begin(cpu);
+    ret = ppoll(&p, 1, NULL, set);
+    accel_cpu_ioctl_end(cpu);
+    if (ret == -1) {
+        ret = -errno;
+    }
+    *events = p.revents;
+    return ret;
+}
+
 int kvm_device_ioctl(int fd, int type, ...)
 {
     int ret;
