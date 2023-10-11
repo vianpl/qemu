@@ -126,6 +126,7 @@ struct kvm_hyperv_exit {
 #define KVM_EXIT_HYPERV_SYNIC          1
 #define KVM_EXIT_HYPERV_HCALL          2
 #define KVM_EXIT_HYPERV_SYNDBG         3
+#define KVM_EXIT_HYPERV_HCALL_XMM      4
 	__u32 type;
 	__u32 pad1;
 	union {
@@ -139,7 +140,10 @@ struct kvm_hyperv_exit {
 		struct {
 			__u64 input;
 			__u64 result;
-			__u64 params[2];
+			__u64 ingpa;
+			__u64 outgpa;
+			#define HV_HYPERCALL_MAX_XMM_REGISTERS		6
+			__u64 xmm[HV_HYPERCALL_MAX_XMM_REGISTERS * 2];
 		} hcall;
 		struct {
 			__u32 msr;

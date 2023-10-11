@@ -985,6 +985,14 @@ static struct {
         },
         .dependencies = BIT(HYPERV_FEAT_VAPIC)
     },
+    [HYPERV_FEAT_XMM_OUTPUT] = {
+        .desc = "XMM fast hypercall output (hv-xmm-output)",
+        .flags = {
+            {.func = HV_CPUID_FEATURES, .reg = R_EDX,
+             .bits = HV_HYPERCALL_XMM_OUPUT_AVAILABLE}
+        },
+        .dependencies = BIT(HYPERV_FEAT_XMM_INPUT)
+    },
 };
 
 static struct kvm_cpuid2 *try_get_hv_cpuid(CPUState *cs, int max,
