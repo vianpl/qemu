@@ -596,6 +596,7 @@ struct VpVsmState {
     DeviceState parent_obj;
 
     CPUState *cs;
+    void *vp_assist;
 };
 
 
@@ -930,6 +931,31 @@ uint16_t hyperv_hcall_vtl_enable_vp_vtl(CPUState *cs, uint64_t param, bool fast)
 unmap:
     cpu_physical_memory_unmap(input, len, 0, 0);
     return ret;
+}
+
+void hyperv_setup_vp_assist(CPUState *cs, uint64_t data)
+{
+    VpVsmState *vpvsm = get_vp_vsm(cs);
+    hwaddr gpa = data & HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_MASK;
+    hwaddr len = 1 << HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT;
+    bool enable = !!(data & HV_X64_MSR_VP_ASSIST_PAGE_ENABLE);
+
+    trace_hyperv_setup_vp_assist(hyperv_vp_index(cs), get_active_vtl(cs), enable, gpa);
+
+    if (!vpvsm)
+        return;
+
+    if (vpvsm->vp_assist)
+        cpu_physical_memory_unmap(vpvsm->vp_assist, len, 0, 0);
+
+    if (!enable)
+        return;
+
+    vpvsm->vp_assist = cpu_physical_memory_map(gpa, &len, 0);
+    if (!vpvsm->vp_assist) {
+        printf("Failed to map VP assit page");
+        return;
+    }
 }
 
 uint16_t hyperv_hcall_post_message(uint64_t param, bool fast)

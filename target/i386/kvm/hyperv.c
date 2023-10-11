@@ -161,6 +161,8 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
     case KVM_EXIT_HYPERV_OVERLAY: {
         switch (exit->u.overlay.msr) {
         case HV_X64_MSR_APIC_ASSIST_PAGE:
+            hyperv_setup_vp_assist(CPU(cpu), exit->u.overlay.gpa);
+            break;
         case HV_X64_MSR_GUEST_OS_ID:
         case HV_X64_MSR_HYPERCALL:
             break;
