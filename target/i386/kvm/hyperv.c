@@ -177,3 +177,21 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
         return -1;
     }
 }
+
+int kvm_get_hyperv_vsm_state(X86CPU *cpu, KVMState *vm)
+{
+    struct kvm_hv_vsm_state vsm_state;
+    CPUX86State *env = &cpu->env;
+    int ret;
+
+    ret = kvm_vm_ioctl(vm, KVM_HV_GET_VSM_STATE, &vsm_state);
+    if (ret) {
+        fprintf(stderr, "Failed to get VSM state ret=%d\n", ret);
+        return ret;
+    }
+
+    env->vsm_code_page_offsets32 = vsm_state.vsm_code_page_offsets32;
+    env->vsm_code_page_offsets64 = vsm_state.vsm_code_page_offsets64;
+
+    return 0;
+}

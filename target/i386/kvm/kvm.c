@@ -4908,6 +4908,12 @@ int kvm_arch_get_registers(CPUState *cs)
         }
     }
 #endif
+    if (hyperv_feat_enabled(cpu, HYPERV_FEAT_VSM)) {
+        ret = kvm_get_hyperv_vsm_state(cpu, cs->kvm_state);
+        if (ret < 0) {
+            goto out;
+        }
+    }
     ret = 0;
  out:
     cpu_sync_bndcs_hflags(&cpu->env);

@@ -1887,6 +1887,10 @@ typedef struct CPUArchState {
     TPRAccess tpr_access_type;
 
     unsigned nr_dies;
+
+    /* Hyper-V VSM specific */
+    uint64_t vsm_code_page_offsets64;
+    uint64_t vsm_code_page_offsets32;
 } CPUX86State;
 
 struct kvm_msrs;
