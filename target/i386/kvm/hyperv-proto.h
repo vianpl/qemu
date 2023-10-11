@@ -280,4 +280,30 @@ union hv_register_vsm_partition_status {
 	} __attribute__ ((__packed__));
 };
 
+enum hv_x64_pending_event_type {
+	HV_X64_PENDING_EVENT_EXCEPTION = 0,
+	HV_X64_PENDING_EVENT_MEMORY_INTERCEPT = 1,
+	HV_X64_PENDING_EVENT_NESTED_MEMORY_INTERCEPT = 2,
+	HV_X64_PENDING_EVENT_VIRTUALIZATION_FAULT = 3,
+	HV_X64_PENDING_EVENT_HYPERCALL_OUTPUT = 4,
+	HV_X64_PENDING_EXT_INT = 5,
+	HV_X64_PENDING_EVENT_SHADOW_IPT = 6
+};
+
+union hv_x64_pending_exception_event {
+	uint64_t as_u64[2];
+	struct {
+		struct {
+			uint32_t event_pending:1;
+			uint32_t event_type:3;
+			uint32_t _reserved0:4;
+			uint32_t deliver_error_code:1;
+			uint32_t _reserved1:7;
+			uint32_t vector:16;
+		};
+		uint32_t error_code;
+		uint64_t exception_parameter;
+	};
+};
+
 #endif

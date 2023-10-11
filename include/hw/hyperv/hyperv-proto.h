@@ -26,19 +26,26 @@
 #define HV_STATUS_INVALID_HYPERCALL_INPUT     3
 #define HV_STATUS_INVALID_ALIGNMENT           4
 #define HV_STATUS_INVALID_PARAMETER           5
+#define HV_STATUS_ACCESS_DENIED               6
 #define HV_STATUS_INSUFFICIENT_MEMORY         11
 #define HV_STATUS_INVALID_PARTITION_ID        13
+#define HV_STATUS_INVALID_VP_INDEX		      14
 #define HV_STATUS_INVALID_PORT_ID             17
 #define HV_STATUS_INVALID_CONNECTION_ID       18
 #define HV_STATUS_INSUFFICIENT_BUFFERS        19
 #define HV_STATUS_NOT_ACKNOWLEDGED            20
 #define HV_STATUS_NO_DATA                     27
 
+#define HV_HYPERCALL_REP_COMP_OFFSET          32
+#define HV_HYPERCALL_REP_START_OFFSET	      48
+
 /*
  * Hypercall numbers
  */
 #define HV_ENABLE_PARTITION_VTL               0x000d
 #define HV_ENABLE_VP_VTL			          0x000f
+#define HVCALL_GET_VP_REGISTERS	              0x0050
+#define HVCALL_SET_VP_REGISTERS			      0x0051
 #define HV_POST_MESSAGE                       0x005c
 #define HV_SIGNAL_EVENT                       0x005d
 #define HV_POST_DEBUG_DATA                    0x0069
@@ -93,6 +100,56 @@
 /*
  * VSM registers
  */
+#define HV_X64_REGISTER_PENDING_EVENT0                      0x00010004
+#define HV_X64_REGISTER_RSP                                 0x00020004
+#define HV_X64_REGISTER_RIP                                 0x00020010
+#define HV_X64_REGISTER_RFLAGS                              0x00020011
+#define HV_X64_REGISTER_CR0                                 0x00040000
+#define HV_X64_REGISTER_CR3                                 0x00040002
+#define HV_X64_REGISTER_CR4                                 0x00040003
+#define HV_X64_REGISTER_CR8                                 0x00040004
+#define HV_X64_REGISTER_DR7                                 0x00050005
+#define HV_X64_REGISTER_LDTR                                0x00060006
+#define HV_X64_REGISTER_TR                                  0x00060007
+#define HV_X64_REGISTER_IDTR                                0x00070000
+#define HV_X64_REGISTER_GDTR                                0x00070001
+#define HV_X64_REGISTER_EFER                                0x00080001
+#define HV_X64_REGISTER_APIC_BASE                           0x00080003
+#define HV_X64_REGISTER_SYSENTER_CS                         0x00080005
+#define HV_X64_REGISTER_SYSENTER_EIP                        0x00080006
+#define HV_X64_REGISTER_SYSENTER_ESP                        0x00080007
+#define HV_X64_REGISTER_STAR                                0x00080008
+#define HV_X64_REGISTER_LSTAR                               0x00080009
+#define HV_X64_REGISTER_CSTAR                               0x0008000A
+#define HV_X64_REGISTER_SFMASK                              0x0008000B
+#define HV_X64_REGISTER_TSC_AUX                             0x0008007B
+#define HV_X64_REGISTER_CR_INTERCEPT_CONTROL                0x000E0000
+#define HV_X64_REGISTER_CR_INTERCEPT_CR0_MASK               0x000E0001
+#define HV_X64_REGISTER_CR_INTERCEPT_CR4_MASK               0x000E0002
+#define HV_X64_REGISTER_CR_INTERCEPT_IA32_MISC_ENABLE_MASK	0x000E0003
+#define HV_REGISTER_VP_ASSIST_PAGE		                    0x00090013
+#define HV_REGISTER_VSM_CODE_PAGE_OFFSETS                   0x000D0002
+#define HV_REGISTER_VSM_VP_STATUS		                    0x000D0003
+#define HV_REGISTER_VSM_PARTITION_STATUS                    0x000D0004
+#define HV_REGISTER_VSM_VINA                                0x000D0005
+#define HV_REGISTER_VSM_CAPABILITIES                        0x000D0006
+#define HV_REGISTER_VSM_PARTITION_CONFIG                    0x000D0007
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL0               0x000D0010
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL1               0x000D0011
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL2               0x000D0012
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL3               0x000D0013
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL4               0x000D0014
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL5               0x000D0015
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL6               0x000D0016
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL7               0x000D0017
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL8               0x000D0018
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL9               0x000D0019
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL10              0x000D001A
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL11              0x000D001B
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL12              0x000D001C
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL13              0x000D001D
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL14              0x000D001E
+
 #define HV_X64_MSR_VP_ASSIST_PAGE_ENABLE	0x00000001
 #define HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT	12
 #define HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_MASK	\
@@ -226,6 +283,49 @@ union hv_input_vtl {
 	};
 } __attribute__ ((__packed__));
 
+union hv_register_vsm_capabilities {
+	uint64_t as_u64;
+	struct {
+		uint64_t reserved:46;
+		uint64_t deny_lower_vtl_startup:1;
+		uint64_t mbec_vtl_mask:16;
+		uint64_t dr6_shared:1;
+	} __attribute__ ((__packed__));
+};
+
+union hv_register_vsm_partition_config {
+	uint64_t as_u64;
+	struct {
+		uint64_t enable_vtl_protection:1;
+		uint64_t default_vtl_protection_mask:4;
+		uint64_t zero_memory_on_reset:1;
+		uint64_t deny_lower_vtl_startup:1;
+		uint64_t reserved0:2;
+		uint64_t intercept_vp_startup:1;
+		uint64_t reserved1:54;
+	} __attribute__ ((__packed__));
+};
+
+union hv_register_vsm_vp_status {
+	uint64_t as_u64;
+	struct {
+		uint64_t active_vtl:4;
+		uint64_t active_mbec_enabled:1;
+		uint64_t reserved0:11;
+		uint64_t enabled_vtl_set:16;
+		uint64_t reserved1:32;
+	} __attribute__ ((__packed__));
+};
+
+union hv_register_vsm_vp_secure_vtl_config {
+	uint64_t as_u64;
+	struct {
+		uint64_t mbec_enabled:1;
+		uint64_t tlb_locked:1;
+		uint64_t reserved0:62;
+	} __attribute__ ((__packed__));
+};
+
 struct hv_nested_enlightenments_control {
 	struct {
 		uint32_t directhypercall:1;
@@ -281,4 +381,17 @@ struct hv_vp_assist_page {
 	uint8_t intercept_message[256];
 	uint8_t vtl_ret_actions[256];
 } __attribute__ ((__packed__));
+
+struct hv_get_set_vp_registers {
+	uint64_t partition_id;
+	uint32_t vp_index;
+	union hv_input_vtl input_vtl;
+	uint8_t padding[3];
+};
+
+struct hv_vp_register_val {
+	uint64_t low;
+	uint64_t high;
+};
+
 #endif

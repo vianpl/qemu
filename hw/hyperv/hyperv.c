@@ -28,6 +28,7 @@
 #include "target/i386/cpu.h"
 #include "exec/cpu-all.h"
 #include "kvm/kvm_i386.h"
+#include "sysemu/hw_accel.h"
 #include "cpu.h"
 #include "trace.h"
 
@@ -613,6 +614,8 @@ struct VpVsmState {
     DeviceState parent_obj;
 
     CPUState *cs;
+    union hv_register_vsm_vp_status vsm_vp_status;
+    union hv_register_vsm_vp_secure_vtl_config vsm_vtl_config[HV_NUM_VTLS];
     void *vp_assist;
 };
 
@@ -743,6 +746,12 @@ union hv_register_vsm_partition_status hv_vsm_partition_status = {
     .enabled_vtl_set = 1 << 0, /* VTL0 is enabled */
     .maximum_vtl = HV_NUM_VTLS - 1,
 };
+
+union hv_register_vsm_capabilities hv_vsm_partition_capabilities = {
+    .dr6_shared = 0,
+};
+
+union hv_register_vsm_partition_config hv_vsm_partition_config[HV_NUM_VTLS];
 
 uint16_t hyperv_hcall_vtl_enable_partition_vtl(CPUState *cs, uint64_t param1,
                                                uint64_t param2, bool fast)
@@ -940,6 +949,478 @@ void hyperv_setup_vp_assist(CPUState *cs, uint64_t data)
         printf("Failed to map VP assit page");
         return;
     }
+}
+
+static bool get_vsm_vp_secure_vtl_config(CPUState *cs, uint32_t reg, uint64_t *pdata)
+{
+    int reg_vtl = reg - HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL0;
+    int target_vtl = get_active_vtl(cs);
+
+    /* Register VTL level should be 1 below the VTL we are requesting it for (and
+    * VTL0 is never correct) */
+    if (target_vtl == 0 || (reg_vtl >= target_vtl))
+        return false;
+
+    *pdata = get_vp_vsm(cs)->vsm_vtl_config[reg_vtl].as_u64;
+
+    return true;
+}
+
+static bool set_vsm_vp_secure_vtl_config(CPUState *cs, uint32_t reg, uint64_t data)
+{
+    union hv_register_vsm_vp_secure_vtl_config new_val = {.as_u64 = data};
+    int reg_vtl = reg - HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL0;
+    int target_vtl = get_active_vtl(cs);
+
+    /* Register VTL level should be 1 below the VTL we are requesting it for (and
+    * VTL0 is never correct) */
+    if (target_vtl == 0 || (reg_vtl >= target_vtl))
+        return false;
+
+    /* Can't enable MBEC for VTL which does not support it */
+    if (new_val.mbec_enabled && !(hv_vsm_partition_capabilities.mbec_vtl_mask & 1))
+        printf("Hyper-V: MBEC capability not implemented, ignoring\n");
+
+    get_vp_vsm(cs)->vsm_vtl_config[reg_vtl] = new_val;
+    return true;
+}
+
+static void set_vsm_partition_config(uint8_t vtl, uint64_t data)
+{
+	union hv_register_vsm_partition_config new_val = { .as_u64 = data };
+
+	/* enable_vtl_protection bit and default protection mask are write-once after first enabled */
+	if (hv_vsm_partition_config[vtl].enable_vtl_protection) {
+		new_val.enable_vtl_protection = hv_vsm_partition_config[vtl].enable_vtl_protection;
+		new_val.default_vtl_protection_mask = hv_vsm_partition_config[vtl].default_vtl_protection_mask;
+	}
+
+	/* We are not advertising StartVirtualProcessor partition priviledge,
+	 * so requesting those intercepts is ignored (but warned about) */
+	if (new_val.intercept_vp_startup || new_val.deny_lower_vtl_startup)
+		printf("VSM: guest trying to intercept VP startup when it is not advertised");
+
+	hv_vsm_partition_config[vtl] = new_val;
+}
+
+static uint64_t get_vp_register(uint32_t name, struct hv_vp_register_val *val,
+                                CPUState *target_vcpu)
+{
+    VpVsmState *vpvsm = get_vp_vsm(target_vcpu);
+    struct hv_x64_segment_register rhs;
+    struct hv_x64_table_register tr;
+    CPUX86State *env;
+    X86CPU *cpu;
+
+    val->low = val->high = 0;
+    cpu = X86_CPU(target_vcpu);
+    env = &cpu->env;
+
+    switch (name) {
+    case HV_X64_REGISTER_RSP:
+        val->low = env->regs[R_ESP];
+        break;
+    case HV_X64_REGISTER_RIP:
+        val->low = env->eip;
+        break;
+    case HV_X64_REGISTER_RFLAGS:
+        val->low = env->eflags;
+        break;
+    case HV_X64_REGISTER_CR0:
+        val->low = env->cr[0];
+        break;
+    case HV_X64_REGISTER_CR3:
+        val->low = env->cr[3];
+        break;
+    case HV_X64_REGISTER_CR4:
+        val->low = env->cr[4];
+        break;
+    case HV_X64_REGISTER_CR8:
+        val->low = cpu_get_apic_tpr(cpu->apic_state);
+        break;
+    case HV_X64_REGISTER_DR7:
+        val->low = env->dr[7];
+        break;
+    case HV_X64_REGISTER_LDTR:
+        hyperv_get_seg(&env->ldt, &rhs);
+        memcpy(val, &rhs, sizeof(rhs));
+        break;
+    case HV_X64_REGISTER_TR:
+        hyperv_get_seg(&env->tr, &rhs);
+        memcpy(val, &rhs, sizeof(rhs));
+        break;
+    case HV_X64_REGISTER_IDTR:
+        tr.limit = env->idt.limit;
+        tr.base = env->idt.base;
+        memcpy(val, &tr, sizeof(tr));
+        break;
+    case HV_X64_REGISTER_GDTR:
+        tr.limit = env->gdt.limit;
+        tr.base = env->gdt.base;
+        memcpy(val, &tr, sizeof(tr));
+        break;
+    case HV_X64_REGISTER_EFER:
+        val->low = env->efer;
+        break;
+    case HV_X64_REGISTER_SYSENTER_CS:
+        val->low = env->sysenter_cs;
+        break;
+    case HV_X64_REGISTER_SYSENTER_EIP:
+        val->low = env->sysenter_eip;
+        break;
+    case HV_X64_REGISTER_SYSENTER_ESP:
+        val->low = env->sysenter_esp;
+        break;
+    case HV_X64_REGISTER_STAR:
+        val->low = env->star;
+        break;
+#ifdef TARGET_X86_64
+    case HV_X64_REGISTER_LSTAR:
+        val->low = env->lstar;
+        break;
+    case HV_X64_REGISTER_CSTAR:
+        val->low = env->cstar;
+        break;
+    case HV_X64_REGISTER_SFMASK:
+        val->low = env->fmask;
+        break;
+#endif
+    case HV_X64_REGISTER_TSC_AUX:
+        val->low = env->tsc_aux;
+        break;
+    case HV_X64_REGISTER_APIC_BASE:
+        val->low = cpu_get_apic_base(X86_CPU(target_vcpu)->apic_state);
+        break;
+    case HV_REGISTER_VSM_CAPABILITIES:
+        val->low = hv_vsm_partition_capabilities.as_u64;
+        break;
+    case HV_REGISTER_VSM_PARTITION_STATUS:
+        val->low = hv_vsm_partition_status.as_u64;
+        break;
+    case HV_REGISTER_VSM_VP_STATUS:
+        val->low = vpvsm->vsm_vp_status.as_u64;
+        break;
+    case HV_REGISTER_VSM_PARTITION_CONFIG:
+        /*
+		 * This is the only partition wide per-VTL register. Relies on atomicity
+		 * of 64 bits on x86 to avoid taking a partition-wide VTL lock.
+         * TODO: think about the locking
+         */
+        val->low = hv_vsm_partition_config[get_active_vtl(target_vcpu)].as_u64;
+        break;
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL0:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL1:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL2:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL3:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL4:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL5:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL6:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL7:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL8:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL9:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL10:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL11:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL12:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL13:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL14:
+        if (!get_vsm_vp_secure_vtl_config(target_vcpu, name, &val->low))
+            return HV_STATUS_INVALID_PARAMETER;
+        break;
+    case HV_REGISTER_VP_ASSIST_PAGE:
+        val->low = env->msr_hv_vapic;
+        break;
+    case HV_REGISTER_VSM_CODE_PAGE_OFFSETS:
+        val->low = env->vsm_code_page_offsets;
+        break;
+    default:
+        printf("%s: unknown VP register 0x%x\n", __func__, name);
+        return HV_STATUS_INVALID_PARAMETER;
+    };
+
+    trace_hyperv_get_vp_register(name, val->low, val->high);
+    return HV_STATUS_SUCCESS;
+}
+
+static uint64_t set_vp_register(uint32_t name, struct hv_vp_register_val *val,
+                                CPUState *target_vcpu, bool *dirty)
+{
+    struct hv_x64_segment_register rhs;
+    struct hv_x64_table_register tr;
+    CPUX86State *env;
+    X86CPU *cpu;
+
+    cpu = X86_CPU(target_vcpu);
+    env = &cpu->env;
+
+    /* printf("name %x, val %llx, cpuid %d\n", name, val->low, target_vcpu->cpu_index); */
+    trace_hyperv_set_vp_register(name, val->low, val->high);
+
+    switch (name) {
+    case HV_X64_REGISTER_RSP:
+        env->regs[REG_RSP] = val->low;
+        break;
+    case HV_X64_REGISTER_RIP:
+        env->eip = val->low;
+        break;
+    case HV_X64_REGISTER_RFLAGS:
+        env->eflags = val->low;
+        break;
+    case HV_X64_REGISTER_CR0:
+        env->cr[0] = val->low;
+        break;
+    case HV_X64_REGISTER_CR3:
+        env->cr[3] = val->low;
+        break;
+    case HV_X64_REGISTER_CR4:
+        env->cr[4] = val->low;
+        break;
+    case HV_X64_REGISTER_CR8:
+        cpu_set_apic_tpr(cpu->apic_state, val->low);
+        break;
+    case HV_X64_REGISTER_DR7:
+        env->dr[7] = val->low;
+        break;
+    case HV_X64_REGISTER_LDTR:
+        memcpy(&rhs, val, sizeof(*val));
+        hyperv_set_seg(&env->ldt, &rhs);
+        break;
+    case HV_X64_REGISTER_TR:
+        memcpy(&rhs, val, sizeof(*val));
+        hyperv_set_seg(&env->tr, &rhs);
+        break;
+    case HV_X64_REGISTER_IDTR:
+        memcpy(&tr, val, sizeof(*val));
+        env->idt.base = tr.base;
+        env->idt.limit = tr.limit;
+        break;
+    case HV_X64_REGISTER_GDTR:
+        memcpy(&tr, val, sizeof(*val));
+        env->gdt.base = tr.base;
+        env->gdt.limit = tr.limit;
+        break;
+    case HV_X64_REGISTER_EFER:
+        env->efer = val->low;
+        break;
+    case HV_X64_REGISTER_SYSENTER_CS:
+        env->sysenter_cs = val->low;
+        break;
+    case HV_X64_REGISTER_SYSENTER_EIP:
+        env->sysenter_eip = val->low;
+        break;
+    case HV_X64_REGISTER_SYSENTER_ESP:
+        env->sysenter_esp = val->low;
+        break;
+    case HV_X64_REGISTER_STAR:
+        env->star = val->low;
+        break;
+    case HV_X64_REGISTER_LSTAR:
+        env->lstar = val->low;
+        break;
+    case HV_X64_REGISTER_CSTAR:
+        env->cstar = val->low;
+        break;
+    case HV_X64_REGISTER_SFMASK:
+        env->fmask = val->low;
+        break;
+    case HV_X64_REGISTER_TSC_AUX:
+        env->tsc_aux = val->low;
+        break;
+    case HV_REGISTER_VSM_PARTITION_CONFIG:
+        set_vsm_partition_config(get_active_vtl(target_vcpu), val->low);
+        break;
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL0:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL1:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL2:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL3:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL4:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL5:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL6:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL7:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL8:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL9:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL10:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL11:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL12:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL13:
+    case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL14:
+        if (!set_vsm_vp_secure_vtl_config(target_vcpu, name, val->low))
+            return HV_STATUS_INVALID_PARAMETER;
+        break;
+    case HV_X64_REGISTER_PENDING_EVENT0: {
+        union hv_x64_pending_exception_event event = {
+            .as_u64[0] = val->low,
+            .as_u64[1] = val->high,
+        };
+
+        if (!event.event_pending)
+            break;
+
+        if (event.event_type == HV_X64_PENDING_EVENT_EXCEPTION)
+            kvm_queue_exception(env, event.vector, event.deliver_error_code,
+                                event.error_code, false, 0);
+        else
+            printf("%s, Unknown event type %d\n", __func__, event.event_type);
+
+        break;
+    }
+    case HV_REGISTER_VP_ASSIST_PAGE:
+        env->msr_hv_vapic = val->low;
+        hyperv_setup_vp_assist(target_vcpu, val->low);
+        break;
+    case HV_REGISTER_VSM_VINA:
+    case HV_X64_REGISTER_CR_INTERCEPT_CONTROL:
+    case HV_X64_REGISTER_CR_INTERCEPT_CR0_MASK:
+    case HV_X64_REGISTER_CR_INTERCEPT_CR4_MASK:
+    case HV_X64_REGISTER_CR_INTERCEPT_IA32_MISC_ENABLE_MASK:
+        printf("%s: faking register 0x%x\n", __func__, name);
+        return HV_STATUS_SUCCESS;
+    default:
+        printf("%s: unknown VP register 0x%x\n", __func__, name);
+        return HV_STATUS_INVALID_PARAMETER;
+    };
+
+    *dirty = true;
+    return HV_STATUS_SUCCESS;
+}
+
+/* This is not a spec limit, but rather something we use to limit stack memory usage */
+//TODO get rid of this
+#define KVM_HV_VP_REGISTER_LIST_SIZE 16u
+
+uint64_t hyperv_hcall_get_set_vp_register(CPUState *cs, struct kvm_hyperv_exit *exit,
+                                          bool set)
+{
+    uint16_t rep_cnt = (exit->u.hcall.input >> HV_HYPERCALL_REP_COMP_OFFSET) & 0xfff;
+    uint16_t rep_idx = (exit->u.hcall.input >> HV_HYPERCALL_REP_START_OFFSET) & 0xfff;
+    struct hv_vp_register_val vals[KVM_HV_VP_REGISTER_LIST_SIZE];
+    bool fast = exit->u.hcall.input & HV_HYPERCALL_FAST;
+    uint32_t names[KVM_HV_VP_REGISTER_LIST_SIZE];
+    struct hv_get_set_vp_registers input;
+    __u64 *xmm = &exit->u.hcall.xmm[0];
+    uint16_t xmm_index = 0;
+    CPUState *target_vcpu;
+    bool dirty = false;
+    uint16_t nregs;
+    uint8_t vtl;
+    int status;
+
+    nregs = rep_cnt - rep_idx;
+    nregs = nregs > KVM_HV_VP_REGISTER_LIST_SIZE ? KVM_HV_VP_REGISTER_LIST_SIZE : nregs;
+
+    if (fast) {
+
+        input.partition_id = exit->u.hcall.ingpa;
+        input.vp_index = exit->u.hcall.outgpa & 0xFFFFFFFF;
+        input.input_vtl.as_uint8 = (exit->u.hcall.outgpa >> 32) & 0xFF;
+
+        /* We always return everything for fast calls, so no continuations should be
+         * possible */
+        if (rep_idx != 0)
+            return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+        /* We can never fit more than 4 registers in 6 XMM input regs even if
+         * rep_idx is 0 */
+        if (nregs > 4)
+            return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+        for (int i = 0; i < nregs; i += 4, xmm_index += 2) {
+            names[i] = xmm[xmm_index];
+            names[i + 1] = xmm[xmm_index] >> 32;
+            names[i + 2] = xmm[xmm_index + 1];
+            names[i + 3] = xmm[xmm_index + 1] >> 32;
+        }
+
+        if (set) {
+            /* Register values follow names */
+            for (int i = 0; i < nregs; i++, xmm_index += 2) {
+                vals[i].low = xmm[xmm_index];
+                vals[i].high = xmm[xmm_index + 1];
+            }
+        }
+    } else {
+        uint64_t ingpa = exit->u.hcall.ingpa;
+
+        cpu_physical_memory_read(ingpa, &input, sizeof(input));
+
+        ingpa += sizeof(input) + rep_idx * sizeof(*names);
+        cpu_physical_memory_read(ingpa, names, nregs * sizeof(*names));
+
+        if (set) {
+            /* According to TLFS, values start aligned on 16-byte boundary after names
+            */
+            ingpa = ROUND_UP(ingpa + nregs * sizeof(*names), 16) +
+                  rep_idx * sizeof(*vals);
+            cpu_physical_memory_read(ingpa, vals, nregs * sizeof(*vals));
+        }
+    }
+
+    /* Handle partition ID (the only supported id is self) */
+    if (input.partition_id != HV_PARTITION_ID_SELF) {
+        return HV_STATUS_INVALID_PARTITION_ID;
+    }
+
+    /* Handle target VTL we should use */
+    if (input.input_vtl.use_target_vtl) {
+        vtl = input.input_vtl.target_vtl;
+
+        if (vtl >= HV_NUM_VTLS) {
+            return HV_STATUS_INVALID_HYPERCALL_INPUT;
+        }
+
+        if (vtl > get_active_vtl(cs)) {
+            return HV_STATUS_ACCESS_DENIED;
+        }
+    } else {
+        vtl = get_active_vtl(cs);
+    }
+
+    /* Handle VP index argument */
+    //TODO this is only valid for UP
+    if (input.vp_index != HV_VP_INDEX_SELF && input.vp_index)
+        return HV_STATUS_INVALID_VP_INDEX;
+
+    if (input.vp_index != HV_VP_INDEX_SELF && input.vp_index != get_active_vtl(cs)) {
+        target_vcpu = hyperv_vsm_vcpu(input.vp_index, vtl);
+        if (!target_vcpu)
+          return HV_STATUS_INVALID_VP_INDEX;
+    } else {
+        target_vcpu = hyperv_vsm_vcpu(hyperv_vsm_vp_index(cs), vtl);
+    }
+
+    trace_hyperv_hcall_get_set_vp_register(input.partition_id, input.vp_index,
+                                           vtl, get_active_vtl(cs), nregs, set);
+
+    //TODO Think deeper about locking here...
+    qemu_mutex_lock_iothread();
+    cpu_synchronize_state(target_vcpu);
+    /* Handle actual registers */
+    for (int i = 0; i < nregs; ++i) {
+        status = set ? set_vp_register(names[i], &vals[i], target_vcpu, &dirty):
+                       get_vp_register(names[i], &vals[i], target_vcpu);
+        if (status != HV_STATUS_SUCCESS)
+            break;
+    }
+    if (dirty)
+        cpu_synchronize_post_reset(target_vcpu);
+    qemu_mutex_unlock_iothread();
+
+    if (status != HV_STATUS_SUCCESS)
+        return status;
+
+    /* Return results to guest */
+    if (!set) {
+        if (fast) {
+            for (int i = 0; i < nregs; ++i, xmm_index += 2) {
+                xmm[xmm_index] = vals[i].low;
+                xmm[xmm_index + 1] = vals[i].high;
+            }
+        } else {
+            uint64_t outgpa = exit->u.hcall.outgpa + rep_idx * sizeof(*vals);
+            cpu_physical_memory_write(outgpa, vals, sizeof(*vals) * nregs);
+        }
+    }
+
+    return (uint64_t)HV_STATUS_SUCCESS | ((uint64_t)nregs << HV_HYPERCALL_REP_COMP_OFFSET);
 }
 
 uint16_t hyperv_hcall_post_message(uint64_t param, bool fast)

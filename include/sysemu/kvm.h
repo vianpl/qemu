@@ -353,6 +353,11 @@ unsigned long kvm_arch_vcpu_id(CPUState *cpu);
 void kvm_arch_on_sigbus_vcpu(CPUState *cpu, int code, void *addr);
 #endif
 
+void kvm_queue_exception(CPUX86State *env, int32_t exception_nr,
+                         uint8_t has_error_code, uint32_t error_code,
+                         uint8_t exception_has_payload,
+                         uint64_t exception_payload);
+
 void kvm_arch_init_irq_routing(KVMState *s);
 
 int kvm_arch_fixup_msi_route(struct kvm_irq_routing_entry *route,
