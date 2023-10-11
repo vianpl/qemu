@@ -28,6 +28,7 @@
 #include "target/i386/cpu.h"
 #include "exec/cpu-all.h"
 #include "sysemu/kvm_int.h"
+#include "kvm/kvm_i386.h"
 #include "cpu.h"
 #include "trace.h"
 
@@ -613,6 +614,8 @@ struct VpVsmState {
     DeviceState parent_obj;
 
     CPUState *cs;
+    uint64_t msr_hv_vapic;
+    void *vp_assist;
 };
 
 #define TYPE_VP_VSM "hyperv-vp-vsm"
@@ -621,6 +624,61 @@ OBJECT_DECLARE_SIMPLE_TYPE(VpVsmState, VP_VSM)
 static VpVsmState *get_vp_vsm(CPUState *cs)
 {
     return VP_VSM(object_resolve_path_component(OBJECT(cs), "vp-vsm"));
+}
+
+static void hyperv_setup_vp_assist(CPUState *cs, uint64_t data)
+{
+    hwaddr gpa = data & HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_MASK;
+    hwaddr len = 1 << HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT;
+    bool enable = !!(data & HV_X64_MSR_VP_ASSIST_PAGE_ENABLE);
+    VpVsmState *vpvsm = get_vp_vsm(cs);
+
+    trace_hyperv_setup_vp_assist_page(hyperv_vp_index(cs), get_active_vtl(cs), enable, gpa);
+
+    if (!vpvsm)
+        return;
+
+    vpvsm->msr_hv_vapic = data;
+
+    if (vpvsm->vp_assist)
+        address_space_unmap(cs->as, vpvsm->vp_assist, len, true, len);
+
+    if (!enable)
+        return;
+
+    vpvsm->vp_assist = address_space_map(cs->as, gpa, &len, true, MEMTXATTRS_UNSPECIFIED);
+    if (!vpvsm->vp_assist) {
+        printf("Failed to map VP assit page");
+        return;
+    }
+
+    memset(vpvsm->vp_assist, 0, sizeof(struct hv_vp_assist_page));
+}
+
+static bool hyperv_vp_assist_page_wrmsr(X86CPU *cpu, uint32_t msr, uint64_t val)
+{
+    if (msr != HV_X64_MSR_APIC_ASSIST_PAGE) {
+        printf("In %s with MSR %x\n", __func__, msr);
+        return false;
+    }
+
+    hyperv_setup_vp_assist(CPU(cpu), val);
+    kvm_put_hv_vp_assist(cpu, val);
+
+    return true;
+}
+
+int hyperv_init_vsm(CPUState *cs)
+{
+    KVMState *s = cs->kvm_state;
+
+    //TODO Add filter for VP INDEX MSR, we don't support vp_index != apic_id.
+    if (!kvm_filter_msr(s, HV_X64_MSR_APIC_ASSIST_PAGE, NULL, hyperv_vp_assist_page_wrmsr)) {
+        printf("Failed to set HV_X64_MSR_APIC_ASSIST_PAGE MSR handler\n");
+        return -1;
+    }
+
+    return 0;
 }
 
 static void hyperv_set_seg(SegmentCache *lhs, const struct hv_x64_segment_register *rhs)

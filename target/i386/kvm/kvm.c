@@ -1667,6 +1667,11 @@ static int hyperv_init_vcpu(X86CPU *cpu)
     }
 
     if (hyperv_feat_enabled(cpu, HYPERV_FEAT_VSM)) {
+        if (!hyperv_vp_index(cs) && hyperv_init_vsm(cs)) {
+            error_report("kvm: Failed to enable VSM MSR filtering");
+            return -1;
+        }
+
         if (hyperv_x86_vsm_init(cpu)) {
             error_report("kvm: Failed to init VSM state on cpu %d", hyperv_vp_index(cs));
             return -1;
@@ -3032,6 +3037,14 @@ void kvm_put_apicbase(X86CPU *cpu, uint64_t value)
     assert(ret == 1);
 }
 
+void kvm_put_hv_vp_assist(X86CPU *cpu, uint64_t value)
+{
+    int ret;
+
+    ret = kvm_put_one_msr(cpu, HV_X64_MSR_APIC_ASSIST_PAGE, value);
+    assert(ret == 1);
+}
+
 static int kvm_put_tscdeadline_msr(X86CPU *cpu)
 {
     CPUX86State *env = &cpu->env;
@@ -3432,7 +3445,8 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
             }
 #endif
         }
-        if (hyperv_feat_enabled(cpu, HYPERV_FEAT_VAPIC)) {
+        if (hyperv_feat_enabled(cpu, HYPERV_FEAT_VAPIC) &&
+            !hyperv_feat_enabled(cpu, HYPERV_FEAT_VSM)) {
             kvm_msr_entry_add(cpu, HV_X64_MSR_APIC_ASSIST_PAGE,
                               env->msr_hv_vapic);
         }
@@ -3866,7 +3880,8 @@ static int kvm_get_msrs(X86CPU *cpu)
         kvm_msr_entry_add(cpu, HV_X64_MSR_HYPERCALL, 0);
         kvm_msr_entry_add(cpu, HV_X64_MSR_GUEST_OS_ID, 0);
     }
-    if (hyperv_feat_enabled(cpu, HYPERV_FEAT_VAPIC)) {
+    if (hyperv_feat_enabled(cpu, HYPERV_FEAT_VAPIC) ||
+        hyperv_feat_enabled(cpu, HYPERV_FEAT_VSM)) {
         kvm_msr_entry_add(cpu, HV_X64_MSR_APIC_ASSIST_PAGE, 0);
     }
     if (hyperv_feat_enabled(cpu, HYPERV_FEAT_TIME)) {
