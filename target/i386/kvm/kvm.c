@@ -993,6 +993,14 @@ static struct {
         },
         .dependencies = BIT(HYPERV_FEAT_XMM_INPUT)
     },
+    [HYPERV_FEAT_VSM] = {
+       .desc = "VSM support",
+       .flags = {
+           {.func = HV_CPUID_FEATURES, .reg = R_EBX,
+            .bits = HV_ACCESS_VSM | HV_ACCESS_VP_REGS},
+       },
+       .dependencies = BIT(HYPERV_FEAT_SYNIC)
+    },
 };
 
 static struct kvm_cpuid2 *try_get_hv_cpuid(CPUState *cs, int max,
