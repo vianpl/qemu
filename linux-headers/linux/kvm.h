@@ -139,7 +139,10 @@ struct kvm_hyperv_exit {
 		struct {
 			__u64 input;
 			__u64 result;
-			__u64 params[2];
+            __u64 ingpa;
+            __u64 outgpa;
+            #define HV_HYPERCALL_MAX_XMM_REGISTERS		6
+            __u64 xmm[HV_HYPERCALL_MAX_XMM_REGISTERS * 2];
 		} hcall;
 		struct {
 			__u32 msr;
