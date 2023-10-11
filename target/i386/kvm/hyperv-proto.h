@@ -60,6 +60,7 @@
 #define HV_GUEST_CRASH_MSR_AVAILABLE            (1u << 10)
 #define HV_FEATURE_DEBUG_MSRS_AVAILABLE         (1u << 11)
 #define HV_EXT_GVA_RANGES_FLUSH_AVAILABLE       (1u << 14)
+#define HV_HYPERCALL_XMM_OUPUT_AVAILABLE        (1u << 15)
 #define HV_STIMER_DIRECT_MODE_AVAILABLE         (1u << 19)
 
 /*
