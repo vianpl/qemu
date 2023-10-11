@@ -392,7 +392,7 @@ void run_on_cpu(CPUState *cpu, run_on_cpu_func func, run_on_cpu_data data)
     do_run_on_cpu(cpu, func, data, &qemu_global_mutex);
 }
 
-static void qemu_cpu_stop(CPUState *cpu, bool exit)
+void qemu_cpu_stop(CPUState *cpu, bool exit)
 {
     g_assert(qemu_cpu_is_self(cpu));
     cpu->stop = false;
@@ -542,6 +542,24 @@ static bool all_vcpus_paused(void)
     }
 
     return true;
+}
+
+void pause_cond_broadcast(void)
+{
+    qemu_cond_broadcast(&qemu_pause_cond);
+}
+
+void wait_pause_cond(void)
+{
+    qemu_cond_wait(&qemu_pause_cond, &qemu_global_mutex);
+}
+
+void wait_cpu_stopped(CPUState *cpu)
+{
+    while (!cpu->stopped) {
+        qemu_cpu_kick(cpu);
+        qemu_cond_wait(&qemu_pause_cond, &qemu_global_mutex);
+    }
 }
 
 void wait_poll_stopped(CPUState *cpu)
