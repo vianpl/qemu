@@ -105,6 +105,13 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
             exit->u.hcall.result =
                 hyperv_hcall_vtl_enable_vp_vtl(CPU(cpu), in_param, fast);
             break;
+        case HVCALL_GET_VP_REGISTERS:
+          exit->u.hcall.result =
+              hyperv_hcall_get_set_vp_register(CPU(cpu), exit, false);
+          break;
+        case HVCALL_SET_VP_REGISTERS:
+          exit->u.hcall.result =
+              hyperv_hcall_get_set_vp_register(CPU(cpu), exit, true);
           break;
         case HV_POST_MESSAGE:
             exit->u.hcall.result = hyperv_hcall_post_message(in_param, fast);

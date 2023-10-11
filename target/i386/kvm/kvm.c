@@ -678,10 +678,10 @@ void kvm_arch_on_sigbus_vcpu(CPUState *c, int code, void *addr)
     emit_hypervisor_memory_failure(MEMORY_FAILURE_ACTION_IGNORE, false);
 }
 
-static void kvm_queue_exception(CPUX86State *env,
-                                int32_t exception_nr,
-                                uint8_t exception_has_payload,
-                                uint64_t exception_payload)
+void kvm_queue_exception(CPUX86State *env, int32_t exception_nr,
+                         uint8_t has_error_code, uint32_t error_code,
+                         uint8_t exception_has_payload,
+                         uint64_t exception_payload)
 {
     assert(env->exception_nr == -1);
     assert(!env->exception_pending);
@@ -689,6 +689,8 @@ static void kvm_queue_exception(CPUX86State *env,
     assert(!env->exception_has_payload);
 
     env->exception_nr = exception_nr;
+    env->has_error_code = has_error_code;
+    env->error_code = error_code;
 
     if (has_exception_payload) {
         env->exception_pending = 1;
@@ -4923,7 +4925,7 @@ int kvm_arch_process_async_events(CPUState *cs)
             cs->exit_request = 1;
             return 0;
         }
-        kvm_queue_exception(env, EXCP12_MCHK, 0, 0);
+        kvm_queue_exception(env, EXCP12_MCHK, 0, 0, 0, 0);
         env->has_error_code = 0;
 
         cs->halted = 0;
@@ -5144,7 +5146,7 @@ static int kvm_handle_debug(X86CPU *cpu,
         assert(env->exception_nr == -1);
 
         /* pass to guest */
-        kvm_queue_exception(env, arch_info->exception,
+        kvm_queue_exception(env, arch_info->exception, 0, 0,
                             arch_info->exception == EXCP01_DB,
                             arch_info->dr6);
         env->has_error_code = 0;
