@@ -216,6 +216,45 @@
 #define HV_SYNDBG_STATUS_RESET              (1u << 3)
 #define HV_SYNDBG_STATUS_SET_SIZE(st, sz)   (st | (sz << 16))
 
+struct hv_x64_table_register {
+	uint16_t pad[3];
+	uint16_t limit;
+	uint64_t base;
+} __attribute__ ((__packed__));
+
+struct hv_init_vp_context {
+	uint64_t rip;
+	uint64_t rsp;
+	uint64_t rflags;
+
+	struct hv_x64_segment_register cs;
+	struct hv_x64_segment_register ds;
+	struct hv_x64_segment_register es;
+	struct hv_x64_segment_register fs;
+	struct hv_x64_segment_register gs;
+	struct hv_x64_segment_register ss;
+	struct hv_x64_segment_register tr;
+	struct hv_x64_segment_register ldtr;
+
+	struct hv_x64_table_register idtr;
+	struct hv_x64_table_register gdtr;
+
+	uint64_t efer;
+	uint64_t cr0;
+	uint64_t cr3;
+	uint64_t cr4;
+	uint64_t msr_cr_pat;
+} __attribute__ ((__packed__));
+
+struct hv_enable_vp_vtl {
+	uint64_t partition_id;
+	uint32_t vp_index;
+	uint8_t target_vtl;
+	uint8_t	mbz0;
+	uint16_t mbz1;
+	struct hv_init_vp_context vp_context;
+} __attribute__ ((__packed__));
+
 union hv_enable_partition_vtl_flags {
 	uint8_t as_u8;
 	struct {
