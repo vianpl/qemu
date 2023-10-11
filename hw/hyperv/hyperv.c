@@ -1000,6 +1000,10 @@ union hv_register_vsm_capabilities hv_vsm_partition_capabilities = {
 
 union hv_register_vsm_partition_config hv_vsm_partition_config[HV_NUM_VTLS];
 
+struct hv_vsm {
+    GHashTable *prots[HV_NUM_VTLS];
+} hv_vsm;
+
 uint16_t hyperv_hcall_vtl_enable_partition_vtl(CPUState *cs, uint64_t param1,
                                                uint64_t param2, bool fast)
 {
@@ -1047,6 +1051,9 @@ uint16_t hyperv_hcall_vtl_enable_partition_vtl(CPUState *cs, uint64_t param1,
      * TODO: Double-check the number of vCPUs is correct? Maybe can be done
      * dynically? hv-vsm-num-vtls=2 -> updates ms->smp.max_cpus?
      */
+
+    if (!hv_vsm.prots[0])
+        hv_vsm.prots[0] = g_hash_table_new(g_direct_hash, g_direct_equal);
 
     hv_vsm_partition_status.enabled_vtl_set |= (1ul << input.target_vtl);
     return HV_STATUS_SUCCESS;
@@ -1774,6 +1781,165 @@ uint64_t hyperv_hcall_get_set_vp_register(CPUState *cs, struct kvm_hyperv_exit *
     }
 
     return (uint64_t)HV_STATUS_SUCCESS | ((uint64_t)nregs << HV_HYPERCALL_REP_COMP_OFFSET);
+}
+
+static inline uint64_t hyperv_memprot_flags_to_memattrs(int flags)
+{
+    uint64_t memprots = 0;
+
+    memprots |= flags & (KVM_HV_VTL_PROTECTION_READ | KVM_HV_VTL_PROTECTION_WRITE);
+    memprots |= flags & (KVM_HV_VTL_PROTECTION_KMX | KVM_HV_VTL_PROTECTION_UMX)
+                    ? KVM_MEMORY_ATTRIBUTE_EXECUTE
+                    : 0;
+
+    if (!memprots)
+        memprots = KVM_MEMORY_ATTRIBUTE_NO_ACCESS;
+
+    return memprots;
+}
+
+static int hyperv_set_memory_attrs(CPUState *cs, uint8_t vtl, uint32_t flags,
+                                   uint16_t count, uint64_t *gfn_list)
+{
+    struct kvm_memory_attributes attrs = { };
+    GHashTable *prots = hv_vsm.prots[vtl];
+    int fd = hv_vsm.vtl_dev_fd[vtl];
+    uint64_t start, end;
+    int i, ret;
+
+    start = gfn_list[0];
+    end = start + 1;
+    for (i = 1; i < count; i++) {
+        if (gfn_list[i] == end) {
+            end++;
+            continue;
+        }
+
+        attrs.address = start << HV_PAGE_SHIFT;
+        attrs.size = (end - start) * HV_PAGE_SIZE;
+        attrs.attributes = hyperv_memprot_flags_to_memattrs(flags);
+
+        ret = kvm_device_ioctl(fd, KVM_SET_MEMORY_ATTRIBUTES, &attrs);
+        if (ret) {
+            printf("Failed to set memprots for: addr %llx, size %llx, attrs 0x%llx, ret %d\n",
+                 attrs.address, attrs.size, attrs.attributes, ret);
+            return ret;
+        }
+
+        start = gfn_list[i];
+        end = start + 1;
+    }
+
+    attrs.address = start << HV_PAGE_SHIFT;
+    attrs.size = (end - start) * HV_PAGE_SIZE;
+    attrs.attributes = hyperv_memprot_flags_to_memattrs(flags);
+
+    ret = kvm_device_ioctl(fd, KVM_SET_MEMORY_ATTRIBUTES, &attrs);
+    if (ret) {
+        printf("Failed to set memprots for: addr %llx, size %llx, attrs 0x%llx\n",
+             attrs.address, attrs.size, attrs.attributes);
+        return ret;
+    }
+
+    for (i = 0; i < count; i++)
+        g_hash_table_insert(prots, GUINT_TO_POINTER(gfn_list[i]),
+                            GINT_TO_POINTER(flags));
+
+    return 0;
+}
+
+uint64_t hyperv_hcall_vtl_protection_mask(CPUState *cs, struct kvm_hyperv_exit *exit)
+{
+    uint16_t rep_cnt = (exit->u.hcall.input >> HV_HYPERCALL_REP_COMP_OFFSET) & 0xfff;
+    uint16_t rep_idx = (exit->u.hcall.input >> HV_HYPERCALL_REP_START_OFFSET) & 0xfff;
+    bool fast = exit->u.hcall.input & HV_HYPERCALL_FAST;
+    struct hv_modify_vtl_protection_mask input;
+    bool rep =  !!(rep_cnt || rep_idx);
+    __u64 *xmm = &exit->u.hcall.xmm[0];
+    uint8_t target_vtl;
+    uint64_t *gfn_list;
+    uint16_t count, i;
+
+    /* Limit gpa count to how much we can handle per-call */
+    assert(!(rep && rep_idx >= rep_cnt));
+    count = rep_cnt - rep_idx;
+    if (fast) {
+        uint64_t* pinput = (uint64_t*)&input;
+        pinput[0] = exit->u.hcall.ingpa;
+        pinput[1] = exit->u.hcall.outgpa;
+
+        /* We always return everything for fast calls, so no continuations should be possible */
+        if (rep_idx != 0)
+            return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+        gfn_list = g_malloc0(count * sizeof(*gfn_list));
+
+        for (i = 0; i < count; i++)
+            gfn_list[i] = xmm[i];
+    } else {
+        uint64_t ingpa = exit->u.hcall.ingpa;
+        cpu_physical_memory_read(ingpa, &input, sizeof(input));
+
+        gfn_list = g_malloc0(count * sizeof(*gfn_list));
+        ingpa += sizeof(input) + rep_idx * sizeof(*gfn_list);
+        cpu_physical_memory_read(ingpa, gfn_list, count * sizeof(*gfn_list));
+    }
+
+    trace_hyperv_hcall_vtl_protection_mask(input.target_partition_id,
+                                           input.map_flags,
+                                           input.input_vtl.target_vtl, count);
+
+    /* Handle partition ID (the only supported id is self) */
+    if (input.target_partition_id != HV_PARTITION_ID_SELF)
+        return HV_STATUS_INVALID_PARTITION_ID;
+
+    /* Handle target VTL we should use */
+    if (input.input_vtl.use_target_vtl) {
+        target_vtl = input.input_vtl.target_vtl;
+
+        /* VTL may only set protections for a lower VTL */
+        if (target_vtl >= get_active_vtl(cs))
+            return HV_STATUS_ACCESS_DENIED;
+    } else {
+        /*
+         * VTL can only apply protections on a lower VTL, so assume that if target
+         * VTL bit is not set by guest we use the previous VTL.
+         */
+        target_vtl = get_active_vtl(cs) - 1;
+        if (target_vtl == HV_INVALID_VTL)
+            return HV_STATUS_INVALID_PARAMETER;
+    }
+
+    if (target_vtl >= HV_NUM_VTLS)
+        return HV_STATUS_INVALID_PARAMETER;
+
+    if (hyperv_set_memory_attrs(cs, target_vtl, input.map_flags, count, gfn_list))
+        return HV_STATUS_INVALID_PARAMETER;
+
+    g_free(gfn_list);
+    return (uint64_t)count << HV_HYPERCALL_REP_COMP_OFFSET;
+}
+
+int kvm_hv_handle_fault(CPUState *cs, uint64_t gpa, uint64_t size, uint64_t flags)
+{
+    GHashTable *prots = hv_vsm.prots[get_active_vtl(cs)];
+    uint64_t gfn = gpa >> HV_PAGE_SHIFT;
+    uint64_t prot;
+
+    if (!g_hash_table_contains(prots, GUINT_TO_POINTER(gfn))) {
+        printf("Unexpected page fault at vcpu%d addr 0x%lx size %lx flags %lx\n",
+               cs->cpu_index, gpa, size, flags);
+        return -1;
+    }
+
+    prot = GPOINTER_TO_UINT(g_hash_table_lookup(prots, GUINT_TO_POINTER(gfn)));
+
+    trace_hyperv_handle_fault(cs->cpu_index, gpa, size, flags);
+
+    cs->stop = true;
+    cpu_synchronize_state(cs);
+
+    return EXCP_HALTED;
 }
 
 uint16_t hyperv_hcall_post_message(uint64_t param, bool fast)
