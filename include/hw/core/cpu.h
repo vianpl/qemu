@@ -866,6 +866,8 @@ void do_run_on_cpu(CPUState *cpu, run_on_cpu_func func, run_on_cpu_data data,
  */
 void run_on_cpu(CPUState *cpu, run_on_cpu_func func, run_on_cpu_data data);
 
+void qemu_cpu_stop(CPUState *cpu, bool exit);
+
 /**
  * async_run_on_cpu:
  * @cpu: The vCPU to run on.
