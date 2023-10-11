@@ -578,6 +578,35 @@ union hv_register_vsm_partition_status hv_vsm_partition_status = {
     .maximum_vtl = HV_NUM_VTLS - 1,
 };
 
+struct hv_vsm {
+    int vtl_dev_fd[HV_NUM_VTLS];
+} hv_vsm;
+
+static void hyperv_create_vtl_device(KVMState *kvm_state, int vtl)
+{
+        int *fd = &hv_vsm.vtl_dev_fd[vtl];
+        uint64_t tmp = 0;
+
+        *fd = kvm_create_device(kvm_state, KVM_DEV_TYPE_HV_VSM_VTL, false);
+        if (*fd < 0) {
+            printf("Failed to create VTL device, exiting. ret = %d\n",
+                 hv_vsm.vtl_dev_fd[vtl]);
+            exit(1);
+        }
+
+        if (kvm_device_access(*fd, KVM_DEV_HV_VTL_GROUP,
+                              KVM_DEV_HV_VTL_GROUP_VTLNUM, &tmp, false,
+                              &error_abort)) {
+            printf("Failed to get VTL from VSM device\n");
+            exit(1);
+        }
+
+        if (tmp != vtl) {
+            printf("VTL%d device has wrong VTL: %lu\n", vtl, tmp);
+            exit(1);
+        }
+}
+
 uint16_t hyperv_hcall_vtl_enable_partition_vtl(CPUState *cs, uint64_t param1,
                                                uint64_t param2, bool fast)
 {
@@ -626,6 +655,10 @@ uint16_t hyperv_hcall_vtl_enable_partition_vtl(CPUState *cs, uint64_t param1,
      * dynically? hv-vsm-num-vtls=2 -> updates ms->smp.max_cpus?
      */
 
+    if (!hv_vsm.vtl_dev_fd[0])
+        hyperv_create_vtl_device(cs->kvm_state, 0);
+
+    hyperv_create_vtl_device(cs->kvm_state, input.target_vtl);
     hv_vsm_partition_status.enabled_vtl_set |= (1ul << input.target_vtl);
     return HV_STATUS_SUCCESS;
 }
