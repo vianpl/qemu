@@ -1680,6 +1680,8 @@ typedef struct CPUArchState {
     target_ulong cstar;
     target_ulong fmask;
     target_ulong kernelgsbase;
+    target_ulong gsbase;
+    target_ulong fsbase;
 #endif
 
     uint64_t tsc_adjust;
