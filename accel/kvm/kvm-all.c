@@ -3545,6 +3545,10 @@ static void kvm_ipi_signal(int sig)
     }
 }
 
+static void kvm_epoll_kick(int sig)
+{
+}
+
 void kvm_init_cpu_signals(CPUState *cpu)
 {
     int r;
@@ -3554,6 +3558,10 @@ void kvm_init_cpu_signals(CPUState *cpu)
     memset(&sigact, 0, sizeof(sigact));
     sigact.sa_handler = kvm_ipi_signal;
     sigaction(SIG_IPI, &sigact, NULL);
+
+    memset(&sigact, 0, sizeof(sigact));
+    sigact.sa_handler = kvm_epoll_kick;
+    sigaction(SIG_EPOLL_KICK, &sigact, NULL);
 
     pthread_sigmask(SIG_BLOCK, NULL, &set);
 #if defined KVM_HAVE_MCE_INJECTION

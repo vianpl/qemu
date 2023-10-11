@@ -7,6 +7,8 @@
  * See the COPYING file in the top-level directory.
  */
 
+#include <poll.h>
+
 #include "qemu/osdep.h"
 #include "qemu/main-loop.h"
 #include "qemu/module.h"
@@ -600,6 +602,7 @@ struct VpVsmState {
     union hv_register_vsm_vp_status vsm_vp_status;
     union hv_register_vsm_vp_secure_vtl_config vsm_vtl_config[HV_NUM_VTLS];
     void *vp_assist;
+    __sigset_t sigset;
 };
 
 
@@ -688,6 +691,9 @@ static void vp_vsm_realize(DeviceState *dev, Error **errp)
 
     vpvsm->vsm_vp_status.enabled_vtl_set = 1 << 0; /* VTL0 is enabled */
     vpvsm->vsm_vp_status.active_vtl = vtl;
+
+    sigfillset(&vpvsm->sigset);
+    sigdelset(&vpvsm->sigset, SIG_EPOLL_KICK);
 }
 
 static void vp_vsm_class_init(ObjectClass *klass, void *data)
