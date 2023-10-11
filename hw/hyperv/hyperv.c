@@ -27,6 +27,7 @@
 #include "target/i386/kvm/hyperv-proto.h"
 #include "target/i386/cpu.h"
 #include "exec/cpu-all.h"
+#include "kvm/kvm_i386.h"
 #include "cpu.h"
 #include "trace.h"
 
@@ -580,6 +581,29 @@ int hyperv_set_msg_handler(uint32_t conn_id, HvMsgHandler handler, void *data)
     return ret;
 }
 
+static bool hyperv_vp_assist_page_wrmsr(X86CPU *cpu, uint32_t msr, uint64_t val)
+{
+    if (msr != HV_X64_MSR_APIC_ASSIST_PAGE) {
+        printf("In %s with MSR %x\n", __func__, msr);
+        return false;
+    }
+
+    hyperv_setup_vp_assist(CPU(cpu), val);
+    kvm_put_hv_vp_assist(cpu, val);
+
+    return true;
+}
+
+int hyperv_init_vsm(struct KVMState *s)
+{
+    if (!kvm_filter_msr(s, HV_X64_MSR_APIC_ASSIST_PAGE, NULL, hyperv_vp_assist_page_wrmsr)) {
+        printf("Failed to set HV_X64_MSR_HYPERCALL MSR handler\n");
+        return -1;
+    }
+
+    return 0;
+}
+
 static int get_active_vtl(CPUState *cpu)
 {
     return x86_get_apic_id_goup(kvm_arch_vcpu_id(cpu));
@@ -589,6 +613,7 @@ struct VpVsmState {
     DeviceState parent_obj;
 
     CPUState *cs;
+    void *vp_assist;
 };
 
 
@@ -890,6 +915,31 @@ uint16_t hyperv_hcall_vtl_enable_vp_vtl(CPUState *cs, uint64_t param, bool fast)
 unmap:
     cpu_physical_memory_unmap(input, len, 0, 0);
     return ret;
+}
+
+void hyperv_setup_vp_assist(CPUState *cs, uint64_t data)
+{
+    VpVsmState *vpvsm = get_vp_vsm(cs);
+    hwaddr gpa = data & HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_MASK;
+    hwaddr len = 1 << HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT;
+    bool enable = !!(data & HV_X64_MSR_VP_ASSIST_PAGE_ENABLE);
+
+    trace_hyperv_setup_vp_assist(hyperv_vp_index(cs), get_active_vtl(cs), enable, gpa);
+
+    if (!vpvsm)
+        return;
+
+    if (vpvsm->vp_assist)
+        cpu_physical_memory_unmap(vpvsm->vp_assist, len, 0, 0);
+
+    if (!enable)
+        return;
+
+    vpvsm->vp_assist = cpu_physical_memory_map(gpa, &len, 0);
+    if (!vpvsm->vp_assist) {
+        printf("Failed to map VP assit page");
+        return;
+    }
 }
 
 uint16_t hyperv_hcall_post_message(uint64_t param, bool fast)
