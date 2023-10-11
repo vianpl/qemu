@@ -79,7 +79,8 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
          * safe environment (i.e. when all cpus are quiescent) -- this is
          * necessary because memory hierarchy is being changed
          */
-        async_safe_run_on_cpu(CPU(cpu), async_synic_update, RUN_ON_CPU_NULL);
+        //TODO: reinstate this once we fix the kvm run loop
+        //async_safe_run_on_cpu(CPU(cpu), async_synic_update, RUN_ON_CPU_NULL);
 
         return 0;
     case KVM_EXIT_HYPERV_HCALL: {
