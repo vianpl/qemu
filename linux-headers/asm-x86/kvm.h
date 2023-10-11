@@ -564,4 +564,10 @@ struct kvm_pmu_event_filter {
 struct kvm_apic_id_groups {
 	__u8 n_bits;
 };
+
+/* for KVM_HV_GET_VSM_STATE */
+struct kvm_hv_vsm_state {
+	__u64 vsm_code_page_offsets;
+};
+
 #endif /* _ASM_X86_KVM_H */

@@ -2263,4 +2263,7 @@ struct kvm_s390_zpci_op {
 #define KVM_S390_ZPCIOP_REGAEN_HOST    (1 << 0)
 
 #define KVM_SET_APIC_ID_GROUPS _IOW(KVMIO, 0xd7, struct kvm_apic_id_groups)
+
+#define KVM_HV_GET_VSM_STATE _IOR(KVMIO, 0xd5, struct kvm_hv_vsm_state)
+
 #endif /* __LINUX_KVM_H */
