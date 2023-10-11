@@ -4322,7 +4322,7 @@ static int kvm_get_msrs(X86CPU *cpu)
     return 0;
 }
 
-static int kvm_put_mp_state(X86CPU *cpu)
+int kvm_put_mp_state(X86CPU *cpu)
 {
     struct kvm_mp_state mp_state = { .mp_state = cpu->env.mp_state };
 
@@ -5391,6 +5391,8 @@ int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
         ret = kvm_hv_handle_exit(cpu, &run->hyperv);
         break;
     case KVM_EXIT_MEMORY_FAULT:
+        ret = kvm_hv_handle_fault(cs, run->memory.gpa, run->memory.size,
+                                  run->memory.flags, run->memory.exit_instruction_len);
         break;
     case KVM_EXIT_IOAPIC_EOI:
         ioapic_eoi_broadcast(run->eoi.vector);
