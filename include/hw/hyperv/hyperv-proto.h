@@ -17,6 +17,7 @@
 
 //TODO: 16?
 #define HV_NUM_VTLS		2
+#define HV_INVALID_VTL	((uint8_t) -1)
 
 /*
  * Hypercall status code
@@ -42,6 +43,7 @@
 /*
  * Hypercall numbers
  */
+#define HV_MODIFY_VTL_PROTECTION_MASK         0x000c
 #define HV_ENABLE_PARTITION_VTL               0x000d
 #define HV_ENABLE_VP_VTL			          0x000f
 #define HV_VTL_CALL				              0x0011
@@ -395,5 +397,20 @@ struct hv_vp_register_val {
 	uint64_t low;
 	uint64_t high;
 };
+
+#define KVM_HV_VTL_PROTECTION_READ	0x01
+#define KVM_HV_VTL_PROTECTION_WRITE	0x02
+#define KVM_HV_VTL_PROTECTION_UMX	0x04
+#define KVM_HV_VTL_PROTECTION_KMX	0x08
+
+#define HV_PAGE_SIZE                4096
+#define HV_PAGE_SHIFT               12
+
+struct hv_modify_vtl_protection_mask {
+	uint64_t target_partition_id;
+	uint32_t map_flags;
+	union hv_input_vtl input_vtl;
+	uint8_t reserved[3];
+}__attribute__ ((__packed__));
 
 #endif
