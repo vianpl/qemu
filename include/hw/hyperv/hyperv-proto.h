@@ -12,6 +12,11 @@
 
 #include "qemu/bitmap.h"
 
+#define HV_PARTITION_ID_SELF		((uint64_t)-1)
+
+//TODO: 16?
+#define HV_NUM_VTLS		2
+
 /*
  * Hypercall status code
  */
@@ -21,6 +26,7 @@
 #define HV_STATUS_INVALID_ALIGNMENT           4
 #define HV_STATUS_INVALID_PARAMETER           5
 #define HV_STATUS_INSUFFICIENT_MEMORY         11
+#define HV_STATUS_INVALID_PARTITION_ID        13
 #define HV_STATUS_INVALID_PORT_ID             17
 #define HV_STATUS_INVALID_CONNECTION_ID       18
 #define HV_STATUS_INSUFFICIENT_BUFFERS        19
@@ -30,6 +36,7 @@
 /*
  * Hypercall numbers
  */
+#define HV_ENABLE_PARTITION_VTL               0x000d
 #define HV_POST_MESSAGE                       0x005c
 #define HV_SIGNAL_EVENT                       0x005d
 #define HV_POST_DEBUG_DATA                    0x0069
