@@ -10,6 +10,8 @@
 #ifndef HW_HYPERV_HYPERV_H
 #define HW_HYPERV_HYPERV_H
 
+#include <linux/kvm.h>
+
 #include "cpu-qom.h"
 #include "hw/hyperv/hyperv-proto.h"
 #include "cpu.h"
@@ -62,7 +64,8 @@ int hyperv_set_event_flag_handler(uint32_t conn_id, EventNotifier *notifier);
 int hyperv_init_vsm(CPUState *cs);
 uint16_t hyperv_hcall_vtl_enable_partition_vtl(CPUState *cs, uint64_t param1,
                                                uint64_t param2, bool fast);
-
+uint64_t hyperv_hcall_get_set_vp_register(CPUState *cs, struct kvm_hyperv_exit *exit,
+                                          bool set);
 uint16_t hyperv_hcall_vtl_enable_vp_vtl(CPUState *cs, uint64_t param, bool fast);
 
 /*
