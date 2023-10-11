@@ -5374,6 +5374,8 @@ int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
     case KVM_EXIT_HYPERV:
         ret = kvm_hv_handle_exit(cpu, &run->hyperv);
         break;
+    case KVM_EXIT_MEMORY_FAULT:
+        break;
     case KVM_EXIT_IOAPIC_EOI:
         ioapic_eoi_broadcast(run->eoi.vector);
         ret = 0;
