@@ -21,10 +21,13 @@
 #include "qemu/rcu.h"
 #include "qemu/rcu_queue.h"
 #include "hw/hyperv/hyperv.h"
+#include "hw/i386/x86.h"
+#include "hw/i386/apic_internal.h"
 #include "qom/object.h"
 #include "target/i386/kvm/hyperv-proto.h"
 #include "target/i386/cpu.h"
 #include "exec/cpu-all.h"
+#include "cpu.h"
 #include "trace.h"
 
 struct SynICState {
@@ -577,6 +580,140 @@ int hyperv_set_msg_handler(uint32_t conn_id, HvMsgHandler handler, void *data)
     return ret;
 }
 
+static int get_active_vtl(CPUState *cpu)
+{
+    return x86_get_apic_id_goup(kvm_arch_vcpu_id(cpu));
+}
+
+struct VpVsmState {
+    DeviceState parent_obj;
+
+    CPUState *cs;
+};
+
+
+#define TYPE_VP_VSM "hyperv-vp-vsm"
+OBJECT_DECLARE_SIMPLE_TYPE(VpVsmState, VP_VSM)
+
+static VpVsmState *get_vp_vsm(CPUState *cs)
+{
+    return VP_VSM(object_resolve_path_component(OBJECT(cs), "vp-vsm"));
+}
+
+static void hyperv_set_seg(SegmentCache *lhs, const struct hv_x64_segment_register *rhs)
+{
+    lhs->selector = rhs->selector;
+    lhs->base = rhs->base;
+    lhs->limit = rhs->limit;
+    lhs->flags = (rhs->segment_type << DESC_TYPE_SHIFT) |
+                 (rhs->present * DESC_P_MASK) |
+                 (rhs->descriptor_privilege_level << DESC_DPL_SHIFT) |
+                 (rhs->_default << DESC_B_SHIFT) |
+                 (rhs->non_system_segment * DESC_S_MASK) |
+                 (rhs->_long << DESC_L_SHIFT) |
+                 (rhs->granularity * DESC_G_MASK) |
+                 (rhs->available * DESC_AVL_MASK);
+}
+
+static void hyperv_get_seg(const SegmentCache *lhs, struct hv_x64_segment_register *rhs)
+{
+    unsigned flags = lhs->flags;
+
+    rhs->selector = lhs->selector;
+    rhs->base = lhs->base;
+    rhs->limit = lhs->limit;
+    rhs->segment_type = (flags >> DESC_TYPE_SHIFT) & 15;
+    rhs->non_system_segment = (flags & DESC_S_MASK) != 0;
+    rhs->descriptor_privilege_level = (flags >> DESC_DPL_SHIFT) & 3;
+    rhs->present = (flags & DESC_P_MASK) != 0;
+    rhs->reserved = 0;
+    rhs->available = (flags & DESC_AVL_MASK) != 0;
+    rhs->_long = (flags >> DESC_L_SHIFT) & 1;
+    rhs->_default = (flags >> DESC_B_SHIFT) & 1;
+    rhs->granularity = (flags & DESC_G_MASK) != 0;
+}
+
+static void hyperv_set_vtl_cpu_state(CPUX86State *env, struct hv_init_vp_context *c)
+{
+    env->regs[R_ESP] = c->rsp;
+    env->eip = c->rip;
+    env->eflags = c->rflags;
+
+    hyperv_set_seg(&env->segs[R_CS], &c->cs);
+    hyperv_set_seg(&env->segs[R_DS], &c->ds);
+    hyperv_set_seg(&env->segs[R_ES], &c->es);
+    hyperv_set_seg(&env->segs[R_FS], &c->fs);
+    hyperv_set_seg(&env->segs[R_GS], &c->gs);
+    hyperv_set_seg(&env->segs[R_SS], &c->ss);
+    hyperv_set_seg(&env->tr, &c->tr);
+    hyperv_set_seg(&env->ldt, &c->ldtr);
+
+    env->idt.limit = c->idtr.limit;
+    env->idt.base = c->idtr.base;
+    env->gdt.limit = c->gdtr.limit;
+    env->gdt.base = c->gdtr.base;
+
+    env->efer = c->efer;
+    env->cr[0] = c->cr0;
+    env->cr[3] = c->cr3;
+    env->cr[4] = c->cr4;
+    env->pat = c->msr_cr_pat;
+
+    env->mp_state = KVM_MP_STATE_RUNNABLE;
+
+    /*
+     * Propagate gs.base and fs.base to initial values for MSR_GS_BASE and
+     * MSR_FS_BASE, which are isolated per-VTL but don't have their own fields
+     * in initial VP context.
+     */
+    env->gsbase = c->gs.base;
+    env->fsbase = c->fs.base;
+}
+
+static void vp_vsm_realize(DeviceState *dev, Error **errp)
+{
+    VpVsmState *vpvsm = VP_VSM(dev);
+    int vtl = get_active_vtl(vpvsm->cs);
+
+    vpvsm->vsm_vp_status.enabled_vtl_set = 1 << 0; /* VTL0 is enabled */
+    vpvsm->vsm_vp_status.active_vtl = vtl;
+}
+
+static void vp_vsm_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+
+    dc->realize = vp_vsm_realize;
+    // TODO
+    //dc->unrealize = vp_vsm_unrealize;
+    dc->user_creatable = false;
+}
+
+static void hyperv_vp_vsm_add(CPUState *cs)
+{
+    Object *obj = object_new(TYPE_VP_VSM);
+    VpVsmState *vpvsm = VP_VSM(obj);
+
+    vpvsm->cs = cs;
+    object_property_add_child(OBJECT(cs), "vp-vsm", obj);
+    object_unref(obj);
+    qdev_realize(DEVICE(obj), NULL, &error_abort);
+}
+
+static const TypeInfo vp_vsm_type_info = {
+    .name = TYPE_VP_VSM,
+    .parent = TYPE_DEVICE,
+    .instance_size = sizeof(VpVsmState),
+    .class_init = vp_vsm_class_init,
+};
+
+static void vp_vsm_register_types(void)
+{
+    type_register_static(&vp_vsm_type_info);
+}
+
+type_init(vp_vsm_register_types)
+
 union hv_register_vsm_partition_status hv_vsm_partition_status = {
     .enabled_vtl_set = 1 << 0, /* VTL0 is enabled */
     .maximum_vtl = HV_NUM_VTLS - 1,
@@ -633,6 +770,128 @@ uint16_t hyperv_hcall_vtl_enable_partition_vtl(CPUState *cs, uint64_t param1,
     hv_vsm_partition_status.enabled_vtl_set |= (1ul << input.target_vtl);
     return HV_STATUS_SUCCESS;
 }
+
+static CPUState* hyperv_init_vtl_vcpu(CPUState *cpu, int32_t vp_index, unsigned int vtl)
+{
+    X86MachineState *x86ms = X86_MACHINE(qdev_get_machine());
+    CPUState *new_cpu;
+
+    qemu_mutex_lock_iothread();
+    //TODO Only works on UP
+    x86_cpu_new(x86ms, x86_apic_id_set_group(vp_index, vtl), &error_warn);
+    qemu_mutex_unlock_iothread();
+    new_cpu = hyperv_vsm_vcpu(vp_index, vtl);
+    return new_cpu;
+}
+
+uint16_t hyperv_hcall_vtl_enable_vp_vtl(CPUState *cs, uint64_t param, bool fast)
+{
+    struct hv_enable_vp_vtl *input;
+    uint64_t len = sizeof(*input);
+    CPUState *target_vcpu, *vtl_cpu;
+    APICCommonState *apic_state;
+    APICCommonClass *apic_class;
+    int ret = 0;
+
+    /* Neither continuations not fast calls are possible for this call */
+    if (fast)
+        return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+    input = cpu_physical_memory_map(param, &len, 0);
+    if (len < sizeof(*input)) {
+        ret = HV_STATUS_INVALID_PARAMETER;
+        goto unmap;
+    }
+
+    trace_hyperv_hcall_vtl_enable_vp_vtl(input->partition_id, input->vp_index,
+                                         input->target_vtl.as_uint8);
+
+    /* Only self-targeting is supported */
+    if (input->partition_id != HV_PARTITION_ID_SELF) {
+        ret = HV_STATUS_INVALID_PARTITION_ID;
+        goto unmap;
+    }
+
+    /* Handle VP index argument */
+    //TODO this only works for UP
+    if (input->vp_index != HV_VP_INDEX_SELF && input->vp_index) {
+        ret = HV_STATUS_INVALID_VP_INDEX;
+        goto unmap;
+    }
+
+    if (input->vp_index != HV_VP_INDEX_SELF && input->vp_index != cs->cpu_index) {
+        target_vcpu = hyperv_vsm_vcpu(input->vp_index, get_active_vtl(cs));
+        if (!target_vcpu) {
+            ret = HV_STATUS_INVALID_VP_INDEX;
+            goto unmap;
+        }
+    } else {
+        target_vcpu = cs;
+    }
+
+    /* Check that target VTL is sane */
+    if (input->target_vtl.target_vtl > hv_vsm_partition_status.maximum_vtl) {
+        ret = HV_STATUS_INVALID_PARAMETER;
+        goto unmap;
+    }
+
+    /* Is target VTL already enabled for partition? */
+    if ((hv_vsm_partition_status.enabled_vtl_set & (1ul << input->target_vtl.target_vtl)) == 0) {
+        ret = HV_STATUS_INVALID_PARAMETER;
+        goto unmap;
+    }
+
+    if (!get_vp_vsm(target_vcpu))
+        hyperv_vp_vsm_add(target_vcpu);
+
+    /* Is target VTL already enabled for target vcpu? */
+    if (get_vp_vsm(target_vcpu)->vsm_vp_status.enabled_vtl_set & (1ul << input->target_vtl.target_vtl)) {
+      ret = HV_STATUS_INVALID_PARAMETER;
+      goto unmap;
+    }
+
+    /*
+     * Requestor VP should be running on vtl higher or equal to the new one or
+     * it needs to be running on a highest VTL any VP has enabled
+     * TODO: find alternative to fls()... I'm lazy
+     */
+    /* highest_vp_enabled_vtl = fls(hv->vtl_enabled_for_vps) - 1; */
+    /* if (get_active_vtl(requestor_vcpu) < input.target_vtl.target_vtl && */
+        /* get_active_vtl(requestor_vcpu) != highest_vp_enabled_vtl) */
+        /* return HV_STATUS_INVALID_PARAMETER; */
+
+    vtl_cpu = hyperv_init_vtl_vcpu(target_vcpu, target_vcpu->cpu_index,
+                                   input->target_vtl.target_vtl);
+    if (!vtl_cpu) {
+        printf("%s:%d Failed to init vtl vcpu\n", __func__, __LINE__);
+        ret = HV_STATUS_INVALID_PARAMETER;
+        goto unmap;
+    }
+    hyperv_vp_vsm_add(vtl_cpu);
+    hyperv_set_vtl_cpu_state(&X86_CPU(vtl_cpu)->env, &input->vp_context);
+
+    /*
+     * Windows Server 2019 guest expects VTL1+ apics to be sw-enabled by the fact
+     * that they never try to write anything to SPIV before attempting to send IPIs.
+     * So enable a new apic for them. If they ever change their mind, they will set
+     * their own SPIV value
+     */
+    apic_state = APIC_COMMON(X86_CPU(vtl_cpu)->apic_state);
+    apic_class = APIC_COMMON_GET_CLASS(apic_state);
+    apic_state->spurious_vec = 0x1ff;
+    qemu_mutex_lock_iothread();
+    apic_class->reset(apic_state);
+    qemu_mutex_unlock_iothread();
+
+    /* TODO For VTL2+ We need to always keep track of enabled_vtl_set in the
+     * VTL0 VpVsmState */
+    get_vp_vsm(target_vcpu)->vsm_vp_status.enabled_vtl_set |= 1 << input->target_vtl.target_vtl;
+
+unmap:
+    cpu_physical_memory_unmap(input, len, 0, 0);
+    return ret;
+}
+
 uint16_t hyperv_hcall_post_message(uint64_t param, bool fast)
 {
     uint16_t ret;
