@@ -17,6 +17,7 @@
 
 //TODO: 16?
 #define HV_NUM_VTLS		2
+#define HV_INVALID_VTL	((uint8_t) -1)
 
 /*
  * Hypercall status code
@@ -42,6 +43,7 @@
 /*
  * Hypercall numbers
  */
+#define HV_MODIFY_VTL_PROTECTION_MASK         0x000c
 #define HV_ENABLE_PARTITION_VTL               0x000d
 #define HV_ENABLE_VP_VTL			          0x000f
 #define HV_VTL_CALL				              0x0011
@@ -409,5 +411,98 @@ struct hv_vp_register_val {
 	uint64_t low;
 	uint64_t high;
 };
+
+#define KVM_HV_VTL_PROTECTION_READ	0x01
+#define KVM_HV_VTL_PROTECTION_WRITE	0x02
+#define KVM_HV_VTL_PROTECTION_UMX	0x04
+#define KVM_HV_VTL_PROTECTION_KMX	0x08
+
+#define HV_PAGE_SIZE                4096
+#define HV_PAGE_SHIFT               12
+
+union hv_modify_vtl_protection_mask {
+    uint64_t as_u64[2];
+    struct {
+        uint64_t target_partition_id;
+        uint32_t map_flags;
+        union hv_input_vtl input_vtl;
+        uint8_t reserved[3];
+    } __attribute__ ((__packed__));
+};
+
+/* struct hyperv_intercept_header::access_type_mask */
+#define HV_INTERCEPT_ACCESS_MASK_NONE    0
+#define HV_INTERCEPT_ACCESS_MASK_READ    1
+#define HV_INTERCEPT_ACCESS_MASK_WRITE   2
+#define HV_INTERCEPT_ACCESS_MASK_EXECUTE 4
+
+/* struct hv_intercept_exception::cache_type */
+#define HV_X64_CACHE_TYPE_UNCACHED       0
+#define HV_X64_CACHE_TYPE_WRITECOMBINING 1
+#define HV_X64_CACHE_TYPE_WRITETHROUGH   4
+#define HV_X64_CACHE_TYPE_WRITEPROTECTED 5
+#define HV_X64_CACHE_TYPE_WRITEBACK      6
+
+/* Intecept message header */
+struct hyperv_intercept_header {
+	uint32_t vp_index;
+	uint8_t instruction_length;
+#define HV_INTERCEPT_ACCESS_READ    0
+#define HV_INTERCEPT_ACCESS_WRITE   1
+#define HV_INTERCEPT_ACCESS_EXECUTE 2
+	uint8_t access_type_mask;
+	union {
+		uint16_t as_u16;
+		struct {
+			uint16_t cpl:2;
+			uint16_t cr0_pe:1;
+			uint16_t cr0_am:1;
+			uint16_t efer_lma:1;
+			uint16_t debug_active:1;
+			uint16_t interruption_pending:1;
+			uint16_t reserved:9;
+		};
+	} exec_state;
+	struct hv_x64_segment_register cs;
+	uint64_t rip;
+	uint64_t rflags;
+} __attribute__((packed));
+
+union hv_x64_memory_access_info {
+	uint8_t as_u8;
+	struct {
+		uint8_t gva_valid:1;
+		uint8_t _reserved:7;
+	};
+};
+
+struct hyperv_memory_intercept {
+	struct hyperv_intercept_header header;
+	uint32_t cache_type;
+	uint8_t instruction_byte_count;
+	union hv_x64_memory_access_info memory_access_info;
+	uint16_t _reserved;
+	uint64_t gva;
+	uint64_t gpa;
+	uint8_t instruction_bytes[16];
+	struct hv_x64_segment_register ds;
+	struct hv_x64_segment_register ss;
+	uint64_t rax;
+	uint64_t rcx;
+	uint64_t rdx;
+	uint64_t rbx;
+	uint64_t rsp;
+	uint64_t rbp;
+	uint64_t rsi;
+	uint64_t rdi;
+	uint64_t r8;
+	uint64_t r9;
+	uint64_t r10;
+	uint64_t r11;
+	uint64_t r12;
+	uint64_t r13;
+	uint64_t r14;
+	uint64_t r15;
+} __attribute__((packed));
 
 #endif

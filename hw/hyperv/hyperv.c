@@ -614,6 +614,7 @@ struct VpVsmState {
     uint64_t msr_hv_hypercall;
     void *hypercall_page;
     struct kvm_hv_vcpu_per_vtl_state priv_state;
+    HvSintRoute *intercept_route;
 
     unsigned int vtl_event_state;
     bool vtl_event_handled;
@@ -1142,6 +1143,7 @@ static void vp_vsm_realize(DeviceState *dev, Error **errp)
     vpvsm->vsm_vp_status.enabled_vtl_set = 1 << 0; /* VTL0 is enabled */
     vpvsm->vsm_vp_status.active_vtl = vtl;
     vpvsm->vtl_event_handled = false;
+    vpvsm->intercept_route = NULL;
 }
 
 static void vp_vsm_class_init(ObjectClass *klass, void *data)
@@ -1331,6 +1333,9 @@ uint16_t hyperv_hcall_vtl_enable_partition_vtl(CPUState *cs, uint64_t param1,
     /* Create new KVM VM */
     if (hyperv_kvm_init_vsm(input.target_vtl))
         return HV_STATUS_INVALID_PARAMETER;
+
+    if (!hv_vsm.prots[0])
+        hv_vsm.prots[0] = g_hash_table_new(g_direct_hash, g_direct_equal);
 
     hv_vsm_partition_status.enabled_vtl_set |= (1ul << input.target_vtl);
     return HV_STATUS_SUCCESS;
@@ -2127,6 +2132,383 @@ uint64_t hyperv_hcall_get_set_vp_register(CPUState *cs, struct kvm_hyperv_exit *
     }
 
     return (uint64_t)HV_STATUS_SUCCESS | ((uint64_t)nregs << HV_HYPERCALL_REP_COMP_OFFSET);
+}
+
+static uint8_t hyperv_gen_intercept_access_mask(uint64_t flags)
+{
+    if (flags & KVM_MEMORY_EXIT_FLAG_READ)
+        return HV_INTERCEPT_ACCESS_READ;
+
+    if (flags & KVM_MEMORY_EXIT_FLAG_WRITE)
+        return HV_INTERCEPT_ACCESS_WRITE;
+
+    if (flags & KVM_MEMORY_EXIT_FLAG_EXECUTE)
+        return HV_INTERCEPT_ACCESS_EXECUTE;
+
+    return 0;
+}
+
+static void hyperv_build_memory_intercept(CPUState *intercepted_cpu,
+                                          struct hyperv_message *msg,
+                                          uint64_t gpa, uint64_t flags,
+                                          uint8_t exit_instruction_len)
+{
+    struct hyperv_memory_intercept *intercept = (struct hyperv_memory_intercept *)msg->payload;
+    X86CPU *cpu = X86_CPU(intercepted_cpu);
+    struct hv_x64_segment_register rhs;
+    CPUX86State *env = &cpu->env;
+
+	msg->header.message_type = HV_MESSAGE_GPA_INTERCEPT;
+	msg->header.payload_size = sizeof(*intercept);
+
+	intercept->header.vp_index = hyperv_vp_index(intercepted_cpu);
+	intercept->header.instruction_length = exit_instruction_len;
+	intercept->header.access_type_mask = hyperv_gen_intercept_access_mask(flags);
+    hyperv_get_seg(&env->segs[R_CS], &rhs);
+    memcpy(&intercept->header.cs, &rhs, sizeof(intercept->header.cs));
+	intercept->header.exec_state.cr0_pe = (env->cr[0] & CR0_PE_MASK);
+	intercept->header.exec_state.cr0_am = (env->cr[0] & CR0_AM_MASK);
+    hyperv_get_seg(&env->segs[R_SS], &rhs);
+	intercept->header.exec_state.cpl = rhs.descriptor_privilege_level;
+	intercept->header.exec_state.efer_lma = !!(env->efer & MSR_EFER_LMA);
+	intercept->header.exec_state.debug_active = 0;
+	intercept->header.exec_state.interruption_pending = 0;
+	intercept->header.rip = env->eip;
+	intercept->header.rflags = env->eflags;
+
+	/*
+	 * For exec violations we don't have a way to decode an instruction that issued a fetch
+	 * to a non-X page because CPU points RIP and GPA to the fetch destination in the faulted page.
+	 * Instruction length though is the length of the fetch source.
+	 * Seems like Hyper-V is aware of that and is not trying to access those fields.
+	 */
+	if (intercept->header.access_type_mask == HV_INTERCEPT_ACCESS_EXECUTE) {
+		intercept->instruction_byte_count = 0;
+	} else {
+		intercept->instruction_byte_count = exit_instruction_len;
+		if (intercept->instruction_byte_count > sizeof(intercept->instruction_bytes))
+			intercept->instruction_byte_count = sizeof(intercept->instruction_bytes);
+
+		hyperv_physmem_read(intercepted_cpu, env->eip, intercept->instruction_bytes,
+                            intercept->instruction_byte_count);
+	}
+
+	intercept->memory_access_info.gva_valid = 0;
+	intercept->gva = 0;
+	intercept->gpa = gpa;
+	intercept->cache_type = HV_X64_CACHE_TYPE_WRITEBACK;
+    hyperv_get_seg(&env->segs[R_DS], &rhs);
+    memcpy(&intercept->ds, &rhs, sizeof(intercept->ds));
+    hyperv_get_seg(&env->segs[R_SS], &rhs);
+    memcpy(&intercept->ss, &rhs, sizeof(intercept->ss));
+    intercept->rax = env->regs[R_EAX];
+    intercept->rbx = env->regs[R_EBX];
+    intercept->rcx = env->regs[R_ECX];
+    intercept->rdx = env->regs[R_EDX];
+    intercept->rsp = env->regs[R_ESP];
+    intercept->rbp = env->regs[R_EBP];
+    intercept->rsi = env->regs[R_ESI];
+    intercept->rdi = env->regs[R_EDI];
+    intercept->r8 = env->regs[8];
+    intercept->r9 = env->regs[9];
+    intercept->r10 = env->regs[10];
+    intercept->r11 = env->regs[11];
+    intercept->r12 = env->regs[12];
+    intercept->r13 = env->regs[13];
+    intercept->r14 = env->regs[14];
+    intercept->r15 = env->regs[15];
+}
+
+static inline uint64_t hyperv_memprot_flags_to_memattrs(int flags)
+{
+    uint64_t memattrs = KVM_MEMORY_ATTRIBUTE_NR | KVM_MEMORY_ATTRIBUTE_NW |
+                        KVM_MEMORY_ATTRIBUTE_NX;
+
+    if (flags & KVM_HV_VTL_PROTECTION_READ)
+        memattrs &= ~KVM_MEMORY_ATTRIBUTE_NR;
+
+    if (flags & KVM_HV_VTL_PROTECTION_WRITE)
+        memattrs &= ~KVM_MEMORY_ATTRIBUTE_NW;
+
+    if (flags & (KVM_HV_VTL_PROTECTION_KMX | KVM_HV_VTL_PROTECTION_UMX))
+        memattrs &= ~KVM_MEMORY_ATTRIBUTE_NX;
+
+    return memattrs;
+}
+
+static int hyperv_set_memory_attrs(uint8_t vtl, uint32_t flags, uint16_t count,
+                                  uint64_t *gfn_list)
+{
+    struct kvm_memory_attributes attrs = { };
+    GHashTable *prots = hv_vsm.prots[vtl];
+    KVMState *s = hv_vsm.s[vtl];
+    uint64_t start, end;
+    int i, ret;
+
+    start = gfn_list[0];
+    end = start + 1;
+    for (i = 1; i < count; i++) {
+        if (gfn_list[i] == end) {
+            end++;
+            continue;
+        }
+
+        attrs.address = start << HV_PAGE_SHIFT;
+        attrs.size = (end - start) * HV_PAGE_SIZE;
+        attrs.attributes = hyperv_memprot_flags_to_memattrs(flags);
+
+        ret = kvm_vm_ioctl(s, KVM_SET_MEMORY_ATTRIBUTES, &attrs);
+        if (ret) {
+            printf("Failed to set memprots for: addr %llx, size %llx, attrs 0x%llx, ret %d\n",
+                 attrs.address, attrs.size, attrs.attributes, ret);
+            return ret;
+        }
+
+        start = gfn_list[i];
+        end = start + 1;
+    }
+
+    attrs.address = start << HV_PAGE_SHIFT;
+    attrs.size = (end - start) * HV_PAGE_SIZE;
+    attrs.attributes = hyperv_memprot_flags_to_memattrs(flags);
+
+    ret = kvm_vm_ioctl(s, KVM_SET_MEMORY_ATTRIBUTES, &attrs);
+    if (ret) {
+        printf("Failed to set memprots for: addr %llx, size %llx, attrs 0x%llx\n",
+             attrs.address, attrs.size, attrs.attributes);
+        return ret;
+    }
+
+    for (i = 0; i < count; i++)
+        g_hash_table_insert(prots, GUINT_TO_POINTER(gfn_list[i]),
+                            GINT_TO_POINTER(flags));
+
+    return 0;
+}
+
+uint64_t hyperv_hcall_vtl_protection_mask(CPUState *cs, struct kvm_hyperv_exit *exit)
+{
+    uint16_t rep_cnt = (exit->u.hcall.input >> HV_HYPERCALL_REP_COMP_OFFSET) & 0xfff;
+    uint16_t rep_idx = (exit->u.hcall.input >> HV_HYPERCALL_REP_START_OFFSET) & 0xfff;
+    bool fast = exit->u.hcall.input & HV_HYPERCALL_FAST;
+    union hv_modify_vtl_protection_mask input;
+    bool rep =  !!(rep_cnt || rep_idx);
+    __u64 *xmm = &exit->u.hcall.xmm[0];
+    uint8_t target_vtl;
+    uint64_t *gfn_list;
+    uint16_t count, i;
+
+    assert(!(rep && rep_idx >= rep_cnt));
+    count = rep_cnt - rep_idx;
+    if (fast) {
+        input.as_u64[0] = exit->u.hcall.ingpa;
+        input.as_u64[1] = exit->u.hcall.outgpa;
+
+        /* We always return everything for fast calls, so no continuations should be possible */
+        if (rep_idx != 0)
+            return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+        gfn_list = g_malloc0(count * sizeof(*gfn_list));
+
+        for (i = 0; i < count; i++)
+            gfn_list[i] = xmm[i];
+    } else {
+        uint64_t ingpa = exit->u.hcall.ingpa;
+        hyperv_physmem_read(cs, ingpa, &input, sizeof(input));
+
+        gfn_list = g_malloc0(count * sizeof(*gfn_list));
+        ingpa += sizeof(input) + rep_idx * sizeof(*gfn_list);
+        hyperv_physmem_read(cs, ingpa, gfn_list, count * sizeof(*gfn_list));
+    }
+
+    trace_hyperv_hcall_vtl_protection_mask(input.target_partition_id,
+                                           input.map_flags,
+                                           input.input_vtl.target_vtl, count);
+
+    /* Handle partition ID (the only supported id is self) */
+    if (input.target_partition_id != HV_PARTITION_ID_SELF)
+        return HV_STATUS_INVALID_PARTITION_ID;
+
+    /* Handle target VTL we should use */
+    if (input.input_vtl.use_target_vtl) {
+        target_vtl = input.input_vtl.target_vtl;
+
+        /* VTL may only set protections for a lower VTL */
+        if (target_vtl >= get_active_vtl(cs))
+            return HV_STATUS_ACCESS_DENIED;
+    } else {
+        /*
+         * VTL can only apply protections on a lower VTL, so assume that if target
+         * VTL bit is not set by guest we use the previous VTL.
+         */
+        target_vtl = get_active_vtl(cs) - 1;
+        if (target_vtl == HV_INVALID_VTL)
+            return HV_STATUS_INVALID_PARAMETER;
+    }
+
+    if (target_vtl >= HV_NUM_VTLS)
+        return HV_STATUS_INVALID_PARAMETER;
+
+    if (hyperv_set_memory_attrs(target_vtl, input.map_flags, count, gfn_list))
+        return HV_STATUS_INVALID_PARAMETER;
+
+    g_free(gfn_list);
+    return (uint64_t)count << HV_HYPERCALL_REP_COMP_OFFSET;
+}
+
+static void intercept_cb(void *data, int status)
+{
+    VpVsmState *vsm = data;
+
+    if (!status) {
+        return;
+    }
+
+    assert(status == -EAGAIN);
+
+    while (hyperv_post_msg(vsm->intercept_route, &vsm->intercept_route->staged_msg->msg))
+        sched_yield();
+}
+
+static int hyperv_deliver_memory_intercept(CPUState *cs, struct hyperv_message *msg)
+{
+    VpVsmState *vsm = get_vp_vsm(cs);
+
+    if (!vsm->intercept_route)
+        vsm->intercept_route = hyperv_sint_route_new(hyperv_vp_index(cs),
+                                                     get_active_vtl(cs), 0,
+                                                     intercept_cb, cs);
+    if (!vsm->intercept_route) {
+        error_report("Failed to init intercept sint route\n");
+        return -1;
+    }
+
+    while (hyperv_post_msg(vsm->intercept_route, msg))
+        sched_yield();
+
+    return 0;
+}
+
+static void print_hyperv_memory_intercept(const struct hyperv_memory_intercept *intercept)
+{
+    printf("hyperv_intercept_header:\n");
+    printf("  vp_index: %u\n", intercept->header.vp_index);
+    printf("  instruction_length: %u\n", intercept->header.instruction_length);
+    printf("  access_type_mask: ");
+    // TODO: Review this, either the print function or the intercepts are wrong
+    if (intercept->header.access_type_mask & HV_INTERCEPT_ACCESS_MASK_READ)
+        printf("READ ");
+    if (intercept->header.access_type_mask & HV_INTERCEPT_ACCESS_MASK_WRITE)
+        printf("WRITE ");
+    if (intercept->header.access_type_mask & HV_INTERCEPT_ACCESS_MASK_EXECUTE)
+        printf("EXECUTE ");
+    if (intercept->header.access_type_mask == HV_INTERCEPT_ACCESS_MASK_NONE)
+        printf("NONE");
+    printf("\n");
+    printf("  exec_state.as_u16: 0x%04" PRIx16 "\n", intercept->header.exec_state.as_u16);
+    printf("  exec_state.cpl: %u\n", intercept->header.exec_state.cpl);
+    printf("  exec_state.cr0_pe: %u\n", intercept->header.exec_state.cr0_pe);
+    printf("  exec_state.cr0_am: %u\n", intercept->header.exec_state.cr0_am);
+    printf("  exec_state.efer_lma: %u\n", intercept->header.exec_state.efer_lma);
+    printf("  exec_state.debug_active: %u\n", intercept->header.exec_state.debug_active);
+    printf("  exec_state.interruption_pending: %u\n", intercept->header.exec_state.interruption_pending);
+    printf("  cs.base: 0x%016" PRIx64 "\n", intercept->header.cs.base);
+    printf("  cs.limit: 0x%08" PRIx32 "\n", intercept->header.cs.limit);
+    printf("  cs.selector: 0x%04" PRIx16 "\n", intercept->header.cs.selector);
+    printf("  cs.attributes: 0x%04" PRIx16 "\n", intercept->header.cs.attributes);
+    printf("  rip: 0x%016" PRIx64 "\n", intercept->header.rip);
+    printf("  rflags: 0x%016" PRIx64 "\n", intercept->header.rflags);
+
+    printf("hyperv_memory_intercept:\n");
+    printf("  cache_type: ");
+    switch (intercept->cache_type) {
+        case HV_X64_CACHE_TYPE_UNCACHED:
+            printf("UNCACHED\n");
+            break;
+        case HV_X64_CACHE_TYPE_WRITECOMBINING:
+            printf("WRITECOMBINING\n");
+            break;
+        case HV_X64_CACHE_TYPE_WRITETHROUGH:
+            printf("WRITETHROUGH\n");
+            break;
+        case HV_X64_CACHE_TYPE_WRITEPROTECTED:
+            printf("WRITEPROTECTED\n");
+            break;
+        case HV_X64_CACHE_TYPE_WRITEBACK:
+            printf("WRITEBACK\n");
+            break;
+        default:
+            printf("UNKNOWN (0x%08" PRIx32 ")\n", intercept->cache_type);
+            break;
+    }
+    printf("  instruction_byte_count: %u\n", intercept->instruction_byte_count);
+    printf("  memory_access_info.as_u8: 0x%02" PRIx8 "\n", intercept->memory_access_info.as_u8);
+    printf("  memory_access_info.gva_valid: %u\n", intercept->memory_access_info.gva_valid);
+    printf("  _reserved: 0x%04" PRIx16 "\n", intercept->_reserved);
+    printf("  gva: 0x%016" PRIx64 "\n", intercept->gva);
+    printf("  gpa: 0x%016" PRIx64 "\n", intercept->gpa);
+    printf("  instruction_bytes: ");
+    for (int i = 0; i < intercept->instruction_byte_count; i++) {
+        printf("0x%02" PRIx8 " ", intercept->instruction_bytes[i]);
+    }
+    printf("\n");
+    printf("  ds.base: 0x%016" PRIx64 "\n", intercept->ds.base);
+    printf("  ds.limit: 0x%08" PRIx32 "\n", intercept->ds.limit);
+    printf("  ds.selector: 0x%04" PRIx16 "\n", intercept->ds.selector);
+    printf("  ds.attributes: 0x%04" PRIx16 "\n", intercept->ds.attributes);
+    printf("  ss.base: 0x%016" PRIx64 "\n", intercept->ss.base);
+    printf("  ss.limit: 0x%08" PRIx32 "\n", intercept->ss.limit);
+    printf("  ss.selector: 0x%04" PRIx16 "\n", intercept->ss.selector);
+    printf("  ss.attributes: 0x%04" PRIx16 "\n", intercept->ss.attributes);
+    printf("  rax: 0x%016" PRIx64 "\n", intercept->rax);
+    printf("  rcx: 0x%016" PRIx64 "\n", intercept->rcx);
+    printf("  rdx: 0x%016" PRIx64 "\n", intercept->rdx);
+    printf("  rbx: 0x%016" PRIx64 "\n", intercept->rbx);
+    printf("  rsp: 0x%016" PRIx64 "\n", intercept->rsp);
+    printf("  rbp: 0x%016" PRIx64 "\n", intercept->rbp);
+    printf("  rsi: 0x%016" PRIx64 "\n", intercept->rsi);
+    printf("  rdi: 0x%016" PRIx64 "\n", intercept->rdi);
+    printf("  r8: 0x%016" PRIx64 "\n", intercept->r8);
+    printf("  r9: 0x%016" PRIx64 "\n", intercept->r9);
+    printf("  r10: 0x%016" PRIx64 "\n", intercept->r10);
+    printf("  r11: 0x%016" PRIx64 "\n", intercept->r11);
+    printf("  r12: 0x%016" PRIx64 "\n", intercept->r12);
+    printf("  r13: 0x%016" PRIx64 "\n", intercept->r13);
+    printf("  r14: 0x%016" PRIx64 "\n", intercept->r14);
+    printf("  r15: 0x%016" PRIx64 "\n", intercept->r15);
+}
+
+int kvm_hv_handle_fault(CPUState *cs, uint64_t gpa, uint64_t size,
+                        uint64_t flags, uint8_t exit_instruction_len)
+{
+    GHashTable *prots = hv_vsm.prots[get_active_vtl(cs)];
+    uint64_t gfn = gpa >> HV_PAGE_SHIFT;
+	struct hyperv_message msg = { 0 };
+    uint64_t prot;
+
+    if (!g_hash_table_contains(prots, GUINT_TO_POINTER(gfn))) {
+        printf("Unexpected page fault at vcpu%d addr 0x%lx size %lx flags %lx\n",
+               hyperv_vp_index(cs), gpa, size, flags);
+        return -1;
+    }
+
+    prot = GPOINTER_TO_UINT(g_hash_table_lookup(prots, GUINT_TO_POINTER(gfn)));
+
+    trace_hyperv_handle_fault(hyperv_vp_index(cs), get_active_vtl(cs), gpa,
+                              size, exit_instruction_len, flags, prot);
+
+    printf("VP index %d, vtl %d, gpa 0x%lx, size 0x%lx, insn len %d, flags "
+           "0x%lx, vtl prots 0x%lx\n",
+           hyperv_vp_index(cs), get_active_vtl(cs), gpa, size,
+           exit_instruction_len, flags, prot);
+
+    cs->stop = true;
+    cpu_synchronize_state(cs);
+    hyperv_build_memory_intercept(cs, &msg, gpa, flags, exit_instruction_len);
+    hyperv_deliver_memory_intercept(hyperv_get_next_vtl(cs), &msg);
+    print_hyperv_memory_intercept((struct hyperv_memory_intercept *)msg.payload);
+
+    return EXCP_HALTED;
 }
 
 uint16_t hyperv_hcall_post_message(uint64_t param, bool fast)
