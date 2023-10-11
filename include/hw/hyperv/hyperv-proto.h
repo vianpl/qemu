@@ -91,6 +91,14 @@
 #define HV_CONNECTION_ID_MASK                 0x00ffffff
 
 /*
+ * VSM registers
+ */
+#define HV_X64_MSR_VP_ASSIST_PAGE_ENABLE	0x00000001
+#define HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT	12
+#define HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_MASK	\
+		(~((1ull << HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT) - 1))
+
+/*
  * Input structure for POST_MESSAGE hypercall
  */
 struct hyperv_post_message_input {
@@ -216,5 +224,61 @@ union hv_input_vtl {
 		uint8_t use_target_vtl: 1;
 		uint8_t reserved_z: 3;
 	};
+} __attribute__ ((__packed__));
+
+struct hv_nested_enlightenments_control {
+	struct {
+		uint32_t directhypercall:1;
+		uint32_t reserved:31;
+	} features;
+	struct {
+		uint32_t inter_partition_comm:1;
+		uint32_t reserved:31;
+	} hypercallControls;
+} __attribute__ ((__packed__));
+
+struct hv_vp_vtl_control {
+	uint32_t vtl_entry_reason;
+
+	union {
+		uint8_t as_u8;
+		struct {
+			uint8_t vina_asserted:1;
+			uint8_t reserved0:7;
+		};
+	};
+
+	uint8_t reserved1[3];
+
+	union {
+		struct {
+			uint64_t vtl_ret_x64rax;
+			uint64_t vtl_ret_x64rcx;
+		};
+
+		struct {
+			uint32_t vtl_return_x86_eax;
+			uint32_t vtl_return_x86_ecx;
+			uint32_t vtl_return_x86_edx;
+			uint32_t reserved2;
+		};
+	};
+};
+
+/* Define virtual processor assist page structure. */
+struct hv_vp_assist_page {
+	uint32_t apic_assist;
+	uint32_t reserved1;
+	struct hv_vp_vtl_control vtl_control;
+	struct hv_nested_enlightenments_control nested_control;
+	uint8_t enlighten_vmentry;
+	uint8_t reserved2[7];
+	uint64_t current_nested_vmcs;
+	uint8_t synthetic_time_unhalted_timer_expired;
+	uint8_t reserved3[7];
+	uint8_t virtualization_fault_information[40];
+	uint8_t reserved4[8];
+	uint8_t intercept_message[256];
+	uint8_t vtl_ret_actions[256];
 } __attribute__ ((__packed__));
 #endif
