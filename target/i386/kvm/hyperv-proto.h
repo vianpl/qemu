@@ -216,4 +216,29 @@
 #define HV_SYNDBG_STATUS_RESET              (1u << 3)
 #define HV_SYNDBG_STATUS_SET_SIZE(st, sz)   (st | (sz << 16))
 
+union hv_enable_partition_vtl_flags {
+	uint8_t as_u8;
+	struct {
+		uint8_t enable_mbec:1;
+		uint8_t reserved:7;
+	} __attribute__ ((__packed__));
+};
+
+struct hv_enable_partition_vtl {
+	uint64_t target_partition_id;
+	uint8_t target_vtl;
+	union hv_enable_partition_vtl_flags flags;
+	uint8_t reserved[6];
+} __attribute__ ((__packed__));
+
+union hv_register_vsm_partition_status {
+	uint64_t as_u64;
+	struct {
+		uint64_t enabled_vtl_set:16;
+		uint64_t maximum_vtl:4;
+		uint64_t mbec_enabled_vtl_set:16;
+		uint64_t reserved:28;
+	} __attribute__ ((__packed__));
+};
+
 #endif

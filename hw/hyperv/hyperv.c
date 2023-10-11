@@ -25,6 +25,7 @@
 #include "target/i386/kvm/hyperv-proto.h"
 #include "target/i386/cpu.h"
 #include "exec/cpu-all.h"
+#include "trace.h"
 
 struct SynICState {
     DeviceState parent_obj;
@@ -576,6 +577,62 @@ int hyperv_set_msg_handler(uint32_t conn_id, HvMsgHandler handler, void *data)
     return ret;
 }
 
+union hv_register_vsm_partition_status hv_vsm_partition_status = {
+    .enabled_vtl_set = 1 << 0, /* VTL0 is enabled */
+    .maximum_vtl = HV_NUM_VTLS - 1,
+};
+
+uint16_t hyperv_hcall_vtl_enable_partition_vtl(CPUState *cs, uint64_t param1,
+                                               uint64_t param2, bool fast)
+{
+    struct hv_enable_partition_vtl input;
+    uint64_t *pinput64 = (uint64_t *)&input;
+    /* uint8_t highest_enabled_vtl; */
+
+    // TODO: Implement not fast args
+    if (!fast)
+        return HV_STATUS_INVALID_HYPERCALL_CODE;
+
+    pinput64[0] = param1;
+    pinput64[1] = param2;
+
+    trace_hyperv_hcall_vtl_enable_partition_vtl(
+        input.target_partition_id, input.target_vtl, input.flags.as_u8);
+
+    /* Only self-targeting is supported */
+    if (input.target_partition_id != HV_PARTITION_ID_SELF)
+        return HV_STATUS_INVALID_PARTITION_ID;
+
+    /* We don't declare MBEC support */
+    if (input.flags.enable_mbec != 0)
+        return HV_STATUS_INVALID_PARAMETER;
+
+    /* Check that target VTL is sane */
+    if (input.target_vtl > hv_vsm_partition_status.maximum_vtl)
+        return HV_STATUS_INVALID_PARAMETER;
+
+    /* TODO Is target VTL already enabled? */
+    if (hv_vsm_partition_status.enabled_vtl_set & (1ul << input.target_vtl))
+        return HV_STATUS_INVALID_PARAMETER;
+
+    /*
+    * Requestor VP should be running on VTL higher or equal to the new one or
+    * at the highest VTL enabled for partition overall if the new one is higher
+    * than that
+    */
+    /* highest_enabled_vtl = fls(hv_vsm_partition_status.enabled_vtl_set) - 1; */
+    /* if (get_active_vtl(vcpu) < input.target_vtl && get_active_vtl(vcpu) !=
+    * highest_enabled_vtl) */
+    /* return HV_STATUS_INVALID_PARAMETER; */
+
+    /*
+     * TODO: Double-check the number of vCPUs is correct? Maybe can be done
+     * dynically? hv-vsm-num-vtls=2 -> updates ms->smp.max_cpus?
+     */
+
+    hv_vsm_partition_status.enabled_vtl_set |= (1ul << input.target_vtl);
+    return HV_STATUS_SUCCESS;
+}
 uint16_t hyperv_hcall_post_message(uint64_t param, bool fast)
 {
     uint16_t ret;
