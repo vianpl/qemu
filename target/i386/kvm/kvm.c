@@ -694,10 +694,9 @@ static void kvm_reset_exception(CPUX86State *env)
     env->exception_payload = 0;
 }
 
-static void kvm_queue_exception(CPUX86State *env,
-                                int32_t exception_nr,
-                                uint8_t exception_has_payload,
-                                uint64_t exception_payload)
+void kvm_queue_exception(CPUX86State *env, int32_t exception_nr,
+                         uint8_t exception_has_payload,
+                         uint64_t exception_payload)
 {
     assert(env->exception_nr == -1);
     assert(!env->exception_pending);
