@@ -3034,7 +3034,8 @@ int kvm_cpu_exec(CPUState *cpu)
         }
 #endif
 
-        if (run_ret < 0) {
+        if (run_ret < 0 &&
+            !(run_ret == -EFAULT && run->exit_reason == KVM_EXIT_MEMORY_FAULT)) {
             if (run_ret == -EINTR || run_ret == -EAGAIN) {
                 DPRINTF("io window exit\n");
                 kvm_eat_signals(cpu);
