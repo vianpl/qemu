@@ -544,6 +544,14 @@ static bool all_vcpus_paused(void)
     return true;
 }
 
+void wait_poll_stopped(CPUState *cpu)
+{
+    while (!cpu->stopped) {
+        pthread_kill(cpu->thread->thread, SIG_EPOLL_KICK);
+        qemu_cond_wait(&qemu_pause_cond, &qemu_global_mutex);
+    }
+}
+
 void pause_all_vcpus(void)
 {
     CPUState *cpu;
