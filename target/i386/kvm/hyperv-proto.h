@@ -46,6 +46,8 @@
  */
 #define HV_POST_MESSAGES             (1u << 4)
 #define HV_SIGNAL_EVENTS             (1u << 5)
+#define HV_ACCESS_VSM                (1u << 16)
+#define HV_ACCESS_VP_REGS            (1u << 17)
 
 /*
  * HV_CPUID_FEATURES.EDX bits
