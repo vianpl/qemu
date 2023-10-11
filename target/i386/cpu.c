@@ -7872,6 +7872,8 @@ static Property x86_cpu_properties[] = {
     DEFINE_PROP_BOOL("hv-enforce-cpuid", X86CPU, hyperv_enforce_cpuid, false),
     DEFINE_PROP_BIT64("hv-xmm-output", X86CPU, hyperv_features,
                       HYPERV_FEAT_XMM_OUTPUT, 0),
+    DEFINE_PROP_BIT64("hv-vsm", X86CPU, hyperv_features,
+                      HYPERV_FEAT_VSM, 0),
 
     /* WS2008R2 identify by default */
     DEFINE_PROP_UINT32("hv-version-id-build", X86CPU, hyperv_ver_id_build,

@@ -993,6 +993,14 @@ static struct {
         },
         .dependencies = BIT(HYPERV_FEAT_XMM_INPUT)
     },
+    [HYPERV_FEAT_VSM] = {
+       .desc = "VSM support",
+       .flags = {
+           {.func = HV_CPUID_FEATURES, .reg = R_EBX,
+            .bits = HV_ACCESS_VSM | HV_ACCESS_VP_REGS},
+       },
+       .dependencies = BIT(HYPERV_FEAT_SYNIC)
+    },
 };
 
 static struct kvm_cpuid2 *try_get_hv_cpuid(CPUState *cs, int max,
@@ -1654,6 +1662,14 @@ static int hyperv_init_vcpu(X86CPU *cpu)
         if (ret < 0) {
             error_report("failed to enable KVM_CAP_HYPERV_ENFORCE_CPUID: %s",
                          strerror(-ret));
+            return ret;
+        }
+    }
+
+    if (hyperv_feat_enabled(cpu, HYPERV_FEAT_VSM)) {
+        ret = kvm_vm_enable_cap(cs->kvm_state, KVM_CAP_HYPERV_VSM, 0, true);
+        if (ret < 0) {
+            error_report("kvm: Failed to enable VSM cap: %s", strerror(-ret));
             return ret;
         }
     }
