@@ -7,6 +7,8 @@
  * See the COPYING file in the top-level directory.
  */
 
+#include <poll.h>
+
 #include "qemu/osdep.h"
 #include "qemu/main-loop.h"
 #include "qemu/module.h"

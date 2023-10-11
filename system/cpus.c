@@ -421,7 +421,10 @@ void qemu_wait_io_event(CPUState *cpu)
             slept = true;
             qemu_plugin_vcpu_idle_cb(cpu);
         }
-        qemu_cond_wait(cpu->halt_cond, &qemu_global_mutex);
+        if (cpus_accel->cpu_poll && cpu->poll)
+            cpus_accel->cpu_poll(cpu);
+        else
+            qemu_cond_wait(cpu->halt_cond, &qemu_global_mutex);
     }
     if (slept) {
         qemu_plugin_vcpu_resume_cb(cpu);

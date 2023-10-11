@@ -3216,6 +3216,44 @@ int kvm_vcpu_ioctl(CPUState *cpu, int type, ...)
     return ret;
 }
 
+static int kvm_vcpu_ppoll(CPUState *cpu, short int *events,
+                          const __sigset_t *set)
+{
+    struct pollfd p = {
+		.fd = cpu->kvm_fd,
+		.events = POLLIN,
+		.revents = 0
+	};
+    int ret;
+
+    trace_kvm_vcpu_ppoll(cpu->cpu_index);
+    accel_cpu_ioctl_begin(cpu);
+    ret = ppoll(&p, 1, NULL, set);
+    accel_cpu_ioctl_end(cpu);
+    if (ret == -1) {
+        ret = -errno;
+    }
+    *events = p.revents;
+    return ret;
+}
+
+void kvm_vcpu_poll(CPUState *cpu)
+{
+    short int events;
+    int ret;
+
+    qemu_mutex_unlock_iothread();
+    ret = kvm_vcpu_ppoll(cpu, &events, NULL);
+    if (ret < 0 && ret != -EINTR) {
+        printf("vCPU %d failed to poll with err %d\n", cpu->cpu_index, ret);
+        exit(1);
+    }
+    qemu_mutex_lock_iothread();
+
+    if (cpu->poll_callback)
+        cpu->poll_callback(cpu, events);
+}
+
 int kvm_device_ioctl(int fd, int type, ...)
 {
     int ret;
