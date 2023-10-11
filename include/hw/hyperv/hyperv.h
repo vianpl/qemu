@@ -65,6 +65,8 @@ int hyperv_init_vsm(struct KVMState *s);
 uint16_t hyperv_hcall_vtl_enable_partition_vtl(CPUState *cs, uint64_t param1,
                                                uint64_t param2, bool fast);
 void hyperv_poll_callback(CPUState *cpu, short int events);
+int hyperv_hcall_vtl_call(CPUState *cs);
+int hyperv_hcall_vtl_return(CPUState *cs);
 uint64_t hyperv_hcall_get_set_vp_register(CPUState *cs, struct kvm_hyperv_exit *exit,
                                           bool set);
 uint16_t hyperv_hcall_vtl_enable_vp_vtl(CPUState *cs, uint64_t param, bool fast);
