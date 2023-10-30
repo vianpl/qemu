@@ -56,6 +56,11 @@ int hyperv_x86_vsm_init(X86CPU *cpu)
     return 0;
 }
 
+void hyperv_x86_vsm_reset(X86CPU *cpu)
+{
+    hyperv_vsm_reset(CPU(cpu));
+}
+
 static void kvm_hv_inject_ud(CPUState *c)
 {
     X86CPU *cpu = X86_CPU(c);

@@ -1649,6 +1649,11 @@ int hyperv_vcpu_event_callback(CPUState *vtl1)
     return EXCP_HALTED;
 }
 
+void hyperv_vsm_reset(CPUState *cpu)
+{
+    printf("TODO!! VSM RESET\n");
+}
+
 static bool get_vsm_vp_secure_vtl_config(CPUState *cs, uint32_t reg, uint64_t *pdata)
 {
     int reg_vtl = reg - HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL0;
