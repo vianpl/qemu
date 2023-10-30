@@ -26,5 +26,6 @@ int kvm_get_hyperv_vsm_state(X86CPU *cpu, KVMState *vm);
 int hyperv_x86_synic_add(X86CPU *cpu);
 void hyperv_x86_synic_reset(X86CPU *cpu);
 void hyperv_x86_synic_update(X86CPU *cpu);
+void hyperv_x86_vsm_reset(X86CPU *cpu);
 
 #endif
