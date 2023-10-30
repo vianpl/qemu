@@ -164,6 +164,8 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
         default:
             exit->u.hcall.result = HV_STATUS_INVALID_HYPERCALL_CODE;
         }
+        if ((exit->u.hcall.result & 0xffffffff) != HV_STATUS_SUCCESS)
+            printf("HVCALL 0x%x failed with %llu\n", code, exit->u.hcall.result & 0xffffffff);
         return 0;
     }
 
