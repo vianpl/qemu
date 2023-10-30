@@ -50,6 +50,11 @@ static void async_synic_update(CPUState *cs, run_on_cpu_data data)
     bql_unlock();
 }
 
+void hyperv_x86_vsm_reset(X86CPU *cpu)
+{
+    hyperv_vsm_reset(CPU(cpu));
+}
+
 static void kvm_hv_inject_ud(CPUState *c)
 {
     X86CPU *cpu = X86_CPU(c);

@@ -2316,6 +2316,10 @@ void kvm_arch_after_reset_vcpu(X86CPU *cpu)
 
         hyperv_x86_synic_reset(cpu);
     }
+
+    if (hyperv_feat_enabled(cpu, HYPERV_FEAT_VSM))
+        hyperv_x86_vsm_reset(cpu);
+
 }
 
 void kvm_arch_do_init_vcpu(X86CPU *cpu)
