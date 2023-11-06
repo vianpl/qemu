@@ -100,12 +100,12 @@ static void synic_realize(DeviceState *dev, Error **errp)
     Object *obj = OBJECT(dev);
     SynICState *synic = SYNIC(dev);
     char *msgp_name, *eventp_name;
-    uint32_t vp_index;
+    uint32_t vcpu_id;
 
     /* memory region names have to be globally unique */
-    vp_index = hyperv_vp_index(synic->cs);
-    msgp_name = g_strdup_printf("synic-%u-msg-page", vp_index);
-    eventp_name = g_strdup_printf("synic-%u-event-page", vp_index);
+    vcpu_id = kvm_arch_vcpu_id(synic->cs);
+    msgp_name = g_strdup_printf("synic-%u-msg-page", vcpu_id);
+    eventp_name = g_strdup_printf("synic-%u-event-page", vcpu_id);
 
     memory_region_init_ram(&synic->msg_page_mr, obj, msgp_name,
                            sizeof(*synic->msg_page), &error_abort);
