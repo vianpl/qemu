@@ -6228,7 +6228,7 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
         }
 
         *ecx = count & 0xff;
-        *edx = cpu->apic_id;
+        *edx = x86_get_phys_apic_id(cpu->apic_id);
 
         switch (count) {
         case 0:

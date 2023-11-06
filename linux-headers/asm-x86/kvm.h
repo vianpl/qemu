@@ -560,4 +560,8 @@ struct kvm_pmu_event_filter {
 /* x86-specific KVM_EXIT_HYPERCALL flags. */
 #define KVM_EXIT_HYPERCALL_LONG_MODE	BIT(0)
 
+/* for KVM_SET_APIC_ID_GROUPS */
+struct kvm_apic_id_groups {
+	__u8 n_bits;
+};
 #endif /* _ASM_X86_KVM_H */

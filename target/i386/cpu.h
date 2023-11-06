@@ -2503,4 +2503,24 @@ static inline bool ctl_has_irq(CPUX86State *env)
 # define TARGET_VSYSCALL_PAGE  (UINT64_C(-10) << 20)
 #endif
 
+#define X86_APIC_ID_GROUP_N_BITS  32
+#define X86_APIC_ID_GROUP_MASK  ~0
+#define X86_APIC_ID_GROUP_SHIFT 0
+
+static inline uint32_t x86_get_phys_apic_id(uint32_t apic_id)
+{
+	return apic_id & ~X86_APIC_ID_GROUP_MASK;
+}
+
+static inline uint32_t x86_get_apic_id_goup(uint32_t apic_id)
+{
+	return (apic_id & X86_APIC_ID_GROUP_MASK) >> X86_APIC_ID_GROUP_SHIFT;
+}
+
+static inline int32_t x86_apic_id_set_group(uint32_t apic_id, uint32_t group)
+{
+	return x86_get_phys_apic_id(apic_id) |
+           ((group << X86_APIC_ID_GROUP_SHIFT) & X86_APIC_ID_GROUP_MASK);
+}
+
 #endif /* I386_CPU_H */

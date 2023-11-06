@@ -2776,6 +2776,16 @@ int kvm_arch_init(MachineState *ms, KVMState *s)
         }
     }
 
+    if (kvm_check_extension(s, KVM_CAP_APIC_ID_GROUPS)) {
+        struct kvm_apic_id_groups groups = {};
+        groups.n_bits = X86_APIC_ID_GROUP_N_BITS;
+        ret = kvm_vm_ioctl(s, KVM_SET_APIC_ID_GROUPS, &groups);
+        if (ret < 0) {
+            error_report("kvm: Failed to set APIC ID groups: %s", strerror(-ret));
+            return ret;
+        }
+	}
+
     return 0;
 }
 
