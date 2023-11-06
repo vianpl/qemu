@@ -3419,9 +3419,9 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
         }
         /*
          * Hyper-V partition-wide MSRs: to avoid clearing them on cpu hot-add,
-         * only sync them to KVM on the first cpu
+         * only sync them to KVM on the first cpu on every VTL.
          */
-        if (current_cpu == first_cpu) {
+        if (hyperv_vsm_vcpu(hyperv_vp_index(current_cpu), 0) == first_cpu) {
             if (has_msr_hv_hypercall) {
                 kvm_msr_entry_add(cpu, HV_X64_MSR_GUEST_OS_ID,
                                   env->msr_hv_guest_os_id);
