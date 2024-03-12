@@ -95,13 +95,22 @@ uint32_t x86_cpu_apic_id_from_index(X86MachineState *x86ms,
 }
 
 
-void x86_cpu_new(X86MachineState *x86ms, int64_t apic_id, Error **errp)
+void x86_cpu_new(X86MachineState *x86ms, int namespace, struct KVMState *s, int64_t apic_id, Error **errp)
 {
     Object *cpu = object_new(MACHINE(x86ms)->cpu_type);
+    CPUState *cs = CPU(DEVICE(cpu));
 
     if (!object_property_set_uint(cpu, "apic-id", apic_id, errp)) {
         goto out;
     }
+
+    if (!object_property_set_uint(cpu, "namespace", namespace, errp)) {
+        goto out;
+    }
+
+    if (s)
+        cs->kvm_state = s;
+
     qdev_realize(DEVICE(cpu), NULL, errp);
 
 out:
@@ -153,7 +162,7 @@ void x86_cpus_init(X86MachineState *x86ms, int default_cpu_version)
 
     possible_cpus = mc->possible_cpu_arch_ids(ms);
     for (i = 0; i < ms->smp.cpus; i++) {
-        x86_cpu_new(x86ms, possible_cpus->cpus[i].arch_id, &error_fatal);
+        x86_cpu_new(x86ms, 0, NULL, possible_cpus->cpus[i].arch_id, &error_fatal);
     }
 }
 
@@ -282,7 +291,6 @@ void x86_cpu_unplug_cb(HotplugHandler *hotplug_dev,
 void x86_cpu_pre_plug(HotplugHandler *hotplug_dev,
                       DeviceState *dev, Error **errp)
 {
-    int idx;
     CPUState *cs;
     CPUArchId *cpu_slot;
     X86CPUTopoIDs topo_ids;
@@ -292,6 +300,7 @@ void x86_cpu_pre_plug(HotplugHandler *hotplug_dev,
     X86MachineState *x86ms = X86_MACHINE(hotplug_dev);
     unsigned int smp_cores = ms->smp.cores;
     unsigned int smp_threads = ms->smp.threads;
+    int idx = UNASSIGNED_CPU_INDEX;
     X86CPUTopoInfo topo_info;
 
     if (!object_dynamic_cast(OBJECT(cpu), ms->cpu_type)) {
@@ -371,21 +380,23 @@ void x86_cpu_pre_plug(HotplugHandler *hotplug_dev,
         cpu->apic_id = x86_apicid_from_topo_ids(&topo_info, &topo_ids);
     }
 
-    cpu_slot = x86_find_cpu_slot(MACHINE(x86ms), cpu->apic_id, &idx);
-    if (!cpu_slot) {
-        x86_topo_ids_from_apicid(cpu->apic_id, &topo_info, &topo_ids);
-        error_setg(errp,
-            "Invalid CPU [socket: %u, die: %u, core: %u, thread: %u] with"
-            " APIC ID %" PRIu32 ", valid index range 0:%d",
-            topo_ids.pkg_id, topo_ids.die_id, topo_ids.core_id, topo_ids.smt_id,
-            cpu->apic_id, ms->possible_cpus->len - 1);
-        return;
-    }
+    if (!cpu->namespace) {
+        cpu_slot = x86_find_cpu_slot(MACHINE(x86ms), cpu->apic_id, &idx);
+        if (!cpu_slot) {
+            x86_topo_ids_from_apicid(cpu->apic_id, &topo_info, &topo_ids);
+            error_setg(errp,
+                "Invalid CPU [socket: %u, die: %u, core: %u, thread: %u] with"
+                " APIC ID %" PRIu32 ", valid index range 0:%d",
+                topo_ids.pkg_id, topo_ids.die_id, topo_ids.core_id, topo_ids.smt_id,
+                cpu->apic_id, ms->possible_cpus->len - 1);
+            return;
+        }
 
-    if (cpu_slot->cpu) {
-        error_setg(errp, "CPU[%d] with APIC ID %" PRIu32 " exists",
-                   idx, cpu->apic_id);
-        return;
+        if (cpu_slot->cpu) {
+            error_setg(errp, "CPU[%d] with APIC ID %" PRIu32 " exists",
+                       idx, cpu->apic_id);
+            return;
+        }
     }
 
     /* if 'address' properties socket-id/core-id/thread-id are not set, set them
@@ -440,7 +451,8 @@ void x86_cpu_pre_plug(HotplugHandler *hotplug_dev,
     cs = CPU(cpu);
     cs->cpu_index = idx;
 
-    numa_cpu_pre_plug(cpu_slot, dev, errp);
+    if (!cpu->namespace)
+        numa_cpu_pre_plug(cpu_slot, dev, errp);
 }
 
 CpuInstanceProperties

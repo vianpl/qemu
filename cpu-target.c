@@ -146,10 +146,10 @@ bool cpu_exec_realizefn(CPUState *cpu, Error **errp)
            qdev_get_vmsd(DEVICE(cpu))->unmigratable);
 #else
     if (qdev_get_vmsd(DEVICE(cpu)) == NULL) {
-        vmstate_register(NULL, cpu->cpu_index, &vmstate_cpu_common, cpu);
+        vmstate_register(NULL, cpu->cpu_index | X86_CPU(cpu)->namespace << 16, &vmstate_cpu_common, cpu);
     }
     if (cpu->cc->sysemu_ops->legacy_vmsd != NULL) {
-        vmstate_register(NULL, cpu->cpu_index, cpu->cc->sysemu_ops->legacy_vmsd, cpu);
+        vmstate_register(NULL, cpu->cpu_index | X86_CPU(cpu)->namespace << 16, cpu->cc->sysemu_ops->legacy_vmsd, cpu);
     }
 #endif /* CONFIG_USER_ONLY */
 

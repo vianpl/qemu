@@ -999,7 +999,7 @@ static struct {
        .desc = "VSM support",
        .flags = {
            {.func = HV_CPUID_FEATURES, .reg = R_EBX,
-            .bits = HV_ACCESS_VSM | HV_ACCESS_VP_REGS},
+            .bits = HV_ACCESS_VSM | HV_ACCESS_VP_REGS | HV_START_VP},
        },
        .dependencies = BIT(HYPERV_FEAT_SYNIC)
     },
@@ -1669,14 +1669,13 @@ static int hyperv_init_vcpu(X86CPU *cpu)
     }
 
     if (hyperv_feat_enabled(cpu, HYPERV_FEAT_VSM)) {
-        ret = kvm_vm_enable_cap(cs->kvm_state, KVM_CAP_HYPERV_VSM, 0, true);
-        if (ret < 0) {
-            error_report("kvm: Failed to enable VSM cap: %s", strerror(-ret));
-            return ret;
+        if (!hyperv_vp_index(cs) && hyperv_init_vsm(cs)) {
+            error_report("kvm: Failed to enable VSM MSR filtering");
+            return -1;
         }
 
-        if (hyperv_init_vsm(cs->kvm_state)) {
-            error_report("kvm: Failed to enable VSM MSR filtering");
+        if (hyperv_x86_vsm_init(cpu)) {
+            error_report("kvm: Failed to init VSM state on cpu %d", hyperv_vp_index(cs));
             return -1;
         }
     }
@@ -2514,7 +2513,7 @@ static bool kvm_rdmsr_core_thread_count(X86CPU *cpu, uint32_t msr,
     return true;
 }
 
-static Notifier smram_machine_done;
+//static Notifier smram_machine_done;
 static KVMMemoryListener smram_listener;
 static AddressSpace smram_address_space;
 static MemoryRegion smram_as_root;
@@ -2668,12 +2667,13 @@ int kvm_arch_init(MachineState *ms, KVMState *s)
         }
     }
 
-    if (kvm_check_extension(s, KVM_CAP_X86_SMM) &&
-        object_dynamic_cast(OBJECT(ms), TYPE_X86_MACHINE) &&
-        x86_machine_is_smm_enabled(X86_MACHINE(ms))) {
-        smram_machine_done.notify = register_smram_listener;
-        qemu_add_machine_init_done_notifier(&smram_machine_done);
-    }
+    //TODO VSM & SMM incompatible???
+    /* if (kvm_check_extension(s, KVM_CAP_X86_SMM) && */
+        /* object_dynamic_cast(OBJECT(ms), TYPE_X86_MACHINE) && */
+        /* x86_machine_is_smm_enabled(X86_MACHINE(ms))) { */
+        /* smram_machine_done.notify = register_smram_listener; */
+        /* qemu_add_machine_init_done_notifier(&smram_machine_done); */
+    /* } */
 
     if (enable_cpu_pm) {
         int disable_exits = kvm_check_extension(s, KVM_CAP_X86_DISABLE_EXITS);
@@ -3005,7 +3005,7 @@ static void kvm_msr_entry_add(X86CPU *cpu, uint32_t index, uint64_t value)
     msrs->nmsrs++;
 }
 
-static int kvm_put_one_msr(X86CPU *cpu, int index, uint64_t value)
+int kvm_put_one_msr(X86CPU *cpu, int index, uint64_t value)
 {
     kvm_msr_buf_reset(cpu);
     kvm_msr_entry_add(cpu, index, value);
@@ -3367,7 +3367,8 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
      */
     if (level >= KVM_PUT_RESET_STATE) {
         kvm_msr_entry_add(cpu, MSR_IA32_TSC, env->tsc);
-        kvm_msr_entry_add(cpu, MSR_KVM_SYSTEM_TIME, env->system_time_msr);
+        // TODO: cleanup this. 
+        //kvm_msr_entry_add(cpu, MSR_KVM_SYSTEM_TIME, env->system_time_msr);
         kvm_msr_entry_add(cpu, MSR_KVM_WALL_CLOCK, env->wall_clock_msr);
         if (env->features[FEAT_KVM] & (1 << KVM_FEATURE_ASYNC_PF_INT)) {
             kvm_msr_entry_add(cpu, MSR_KVM_ASYNC_PF_INT, env->async_pf_int_msr);
@@ -3421,12 +3422,14 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
          * Hyper-V partition-wide MSRs: to avoid clearing them on cpu hot-add,
          * only sync them to KVM on the first cpu on every VTL.
          */
-        if (hyperv_vsm_vcpu(hyperv_vsm_vp_index(current_cpu), 0) == first_cpu) {
+        if (hyperv_vsm_vcpu(hyperv_vp_index(current_cpu), 0) == first_cpu) {
             if (has_msr_hv_hypercall) {
                 kvm_msr_entry_add(cpu, HV_X64_MSR_GUEST_OS_ID,
                                   env->msr_hv_guest_os_id);
-                kvm_msr_entry_add(cpu, HV_X64_MSR_HYPERCALL,
-                                  env->msr_hv_hypercall);
+                //TODO update
+                if (!hyperv_feat_enabled(cpu, HYPERV_FEAT_VSM))
+                    kvm_msr_entry_add(cpu, HV_X64_MSR_HYPERCALL,
+                                      env->msr_hv_hypercall);
             }
             if (hyperv_feat_enabled(cpu, HYPERV_FEAT_TIME)) {
                 kvm_msr_entry_add(cpu, HV_X64_MSR_REFERENCE_TSC,
@@ -3448,7 +3451,8 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
             }
 #endif
         }
-        if (hyperv_feat_enabled(cpu, HYPERV_FEAT_VAPIC)) {
+        if (hyperv_feat_enabled(cpu, HYPERV_FEAT_VAPIC) &&
+            !hyperv_feat_enabled(cpu, HYPERV_FEAT_VSM)) {
             kvm_msr_entry_add(cpu, HV_X64_MSR_APIC_ASSIST_PAGE,
                               env->msr_hv_vapic);
         }
@@ -4319,7 +4323,7 @@ static int kvm_get_msrs(X86CPU *cpu)
     return 0;
 }
 
-static int kvm_put_mp_state(X86CPU *cpu)
+int kvm_put_mp_state(X86CPU *cpu)
 {
     struct kvm_mp_state mp_state = { .mp_state = cpu->env.mp_state };
 
@@ -5369,6 +5373,15 @@ int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
                 run->ex.exception, run->ex.error_code);
         ret = -1;
         break;
+    case KVM_EXIT_SYSTEM_EVENT:
+        switch (run->system_event.type) {
+        case KVM_SYSTEM_EVENT_WAKEUP:
+            ret = hyperv_vcpu_event_callback(cs);
+            break;
+        default:
+            ret = -1;
+        }
+        break;
     case KVM_EXIT_DEBUG:
         DPRINTF("kvm_exit_debug\n");
         bql_lock();
@@ -5380,7 +5393,7 @@ int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
         break;
     case KVM_EXIT_MEMORY_FAULT:
         ret = kvm_hv_handle_fault(cs, run->memory.gpa, run->memory.size,
-                                  run->memory.flags);
+                                  run->memory.flags, run->memory.exit_instruction_len);
         break;
     case KVM_EXIT_IOAPIC_EOI:
         ioapic_eoi_broadcast(run->eoi.vector);

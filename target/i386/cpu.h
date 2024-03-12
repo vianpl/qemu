@@ -2048,6 +2048,7 @@ struct ArchCPU {
     int32_t hv_max_vps;
 
     bool xen_vapic;
+    uint32_t namespace;
 };
 
 typedef struct X86CPUModel X86CPUModel;
@@ -2117,7 +2118,8 @@ int cpu_x86_support_mca_broadcast(CPUX86State *env);
 
 #ifndef CONFIG_USER_ONLY
 hwaddr x86_cpu_get_phys_page_attrs_debug(CPUState *cpu, vaddr addr,
-                                         MemTxAttrs *attrs);
+                                         MemTxAttrs *attrs,
+                                         MemFaultAttrs *access);
 int cpu_get_pic_interrupt(CPUX86State *s);
 
 /* MS-DOS compatibility mode FPU exception support */

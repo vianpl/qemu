@@ -35,6 +35,7 @@
 #define HV_STATUS_INVALID_CONNECTION_ID       18
 #define HV_STATUS_INSUFFICIENT_BUFFERS        19
 #define HV_STATUS_NOT_ACKNOWLEDGED            20
+#define HV_STATUS_INVALID_VP_STATE		      21
 #define HV_STATUS_NO_DATA                     27
 
 #define HV_HYPERCALL_REP_COMP_OFFSET          32
@@ -43,19 +44,27 @@
 /*
  * Hypercall numbers
  */
+#define HV_SEND_IPI                           0x000b
 #define HV_MODIFY_VTL_PROTECTION_MASK         0x000c
 #define HV_ENABLE_PARTITION_VTL               0x000d
 #define HV_ENABLE_VP_VTL			          0x000f
 #define HV_VTL_CALL				              0x0011
 #define HV_VTL_RETURN				          0x0012
+#define HV_SEND_IPI_EX                        0x0015
 #define HVCALL_GET_VP_REGISTERS	              0x0050
 #define HVCALL_SET_VP_REGISTERS			      0x0051
+#define HV_TRANSLATE_VIRTUAL_ADDRESS	      0x0052
 #define HV_POST_MESSAGE                       0x005c
 #define HV_SIGNAL_EVENT                       0x005d
 #define HV_POST_DEBUG_DATA                    0x0069
 #define HV_RETRIEVE_DEBUG_DATA                0x006a
 #define HV_RESET_DEBUG_SESSION                0x006b
-#define HV_HYPERCALL_FAST                     (1u << 16)
+#define HV_START_VIRTUAL_PROCESSOR		      0x0099
+#define HV_GET_VP_INDEX_FROM_APIC_ID	      0x009a
+
+#define HV_HYPERCALL_FAST                     BIT(16)
+#define HV_HYPERCALL_VARHEAD_OFFSET	          17
+#define HV_HYPERCALL_VARHEAD_MASK	          MAKE_64BIT_MASK(HV_HYPERCALL_VARHEAD_OFFSET, 9)
 
 /*
  * Message size
@@ -158,6 +167,19 @@
 #define HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT	12
 #define HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_MASK	\
 		(~((1ull << HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT) - 1))
+
+#define HV_X64_MSR_HYPERCALL_ENABLE		0x00000001
+#define HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_SHIFT	12
+#define HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_MASK	\
+		(~((1ull << HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_SHIFT) - 1))
+
+#define HV_IPI_LOW_VECTOR	0x10
+#define HV_IPI_HIGH_VECTOR	0xff
+
+enum HV_GENERIC_SET_FORMAT {
+	HV_GENERIC_SET_SPARSE_4K,
+	HV_GENERIC_SET_ALL,
+};
 
 /*
  * Input structure for POST_MESSAGE hypercall
@@ -321,6 +343,15 @@ union hv_register_vsm_vp_status {
 	} __attribute__ ((__packed__));
 };
 
+union hv_register_vsm_code_page_offsets {
+	uint64_t as_u64;
+	struct {
+		uint64_t vtl_call_offset:12;
+		uint64_t vtl_return_offset:12;
+		uint64_t reserved:40;
+	} __attribute__((__packed__));
+};
+
 union hv_register_vsm_vp_secure_vtl_config {
 	uint64_t as_u64;
 	struct {
@@ -412,5 +443,146 @@ struct hv_modify_vtl_protection_mask {
 	union hv_input_vtl input_vtl;
 	uint8_t reserved[3];
 }__attribute__ ((__packed__));
+
+
+#define HV_XLATE_GVA_SUCCESS 0
+#define HV_XLATE_GVA_UNMAPPED 1
+#define HV_XLATE_GVA_PRIVILEGE_VIOLATION 2
+#define HV_XLATE_GPA_UNMAPPED 4
+#define HV_XLATE_GPA_NO_READ 5
+#define HV_XLATE_GPA_NO_WRITE 6
+#define HV_XLATE_GPA_ILLEGAL_OVERLAY_ACESS 7
+
+#define HV_CACHE_TYPE_X64_WB 6
+
+#define HV_XLATE_GVA_VAL_READ               (1 << 0)
+#define HV_XLATE_GVA_VAL_WRITE              (1 << 1)
+#define HV_XLATE_GVA_VAL_EXECUTE            (1 << 2)
+#define HV_XLATE_GVA_PRIVILEGE_EXEMPT       (1 << 3)
+#define HV_XLATE_GVA_SET_PAGE_TABLE_BITS    (1 << 4)
+#define HV_XLATE_GVA_TLB_FLUSH_INHIBIT      (1 << 5)
+#define HV_XLATE_GVA_FLAGS_MASK             0x3F
+
+struct hv_xlate_va_input {
+	uint64_t partition_id;
+	uint32_t vp_index;
+	uint32_t reserved;
+	uint64_t control_flags;
+	uint64_t gva;
+};
+
+struct hv_xlate_va_output {
+	uint32_t result_code;
+	uint32_t cache_type:8;
+	uint32_t overlay_page:1;
+	uint32_t reserved:23;
+	uint64_t gpa;
+};
+
+/* struct hyperv_intercept_header::access_type_mask */
+#define HV_INTERCEPT_ACCESS_MASK_NONE    0
+#define HV_INTERCEPT_ACCESS_MASK_READ    1
+#define HV_INTERCEPT_ACCESS_MASK_WRITE   2
+#define HV_INTERCEPT_ACCESS_MASK_EXECUTE 4
+
+/* struct hv_intercept_exception::cache_type */
+#define HV_X64_CACHE_TYPE_UNCACHED       0
+#define HV_X64_CACHE_TYPE_WRITECOMBINING 1
+#define HV_X64_CACHE_TYPE_WRITETHROUGH   4
+#define HV_X64_CACHE_TYPE_WRITEPROTECTED 5
+#define HV_X64_CACHE_TYPE_WRITEBACK      6
+
+/* Intecept message header */
+struct hyperv_intercept_header {
+	uint32_t vp_index;
+	uint8_t instruction_length;
+#define HV_INTERCEPT_ACCESS_READ    0
+#define HV_INTERCEPT_ACCESS_WRITE   1
+#define HV_INTERCEPT_ACCESS_EXECUTE 2
+	uint8_t access_type_mask;
+	union {
+		uint16_t as_u16;
+		struct {
+			uint16_t cpl:2;
+			uint16_t cr0_pe:1;
+			uint16_t cr0_am:1;
+			uint16_t efer_lma:1;
+			uint16_t debug_active:1;
+			uint16_t interruption_pending:1;
+			uint16_t reserved:9;
+		};
+	} exec_state;
+	struct hv_x64_segment_register cs;
+	uint64_t rip;
+	uint64_t rflags;
+} __attribute__((packed));
+
+union hv_x64_memory_access_info {
+	uint8_t as_u8;
+	struct {
+		uint8_t gva_valid:1;
+		uint8_t _reserved:7;
+	};
+};
+
+struct hyperv_memory_intercept {
+	struct hyperv_intercept_header header;
+	uint32_t cache_type;
+	uint8_t instruction_byte_count;
+	union hv_x64_memory_access_info memory_access_info;
+	uint16_t _reserved;
+	uint64_t gva;
+	uint64_t gpa;
+	uint8_t instruction_bytes[16];
+	struct hv_x64_segment_register ds;
+	struct hv_x64_segment_register ss;
+	uint64_t rax;
+	uint64_t rcx;
+	uint64_t rdx;
+	uint64_t rbx;
+	uint64_t rsp;
+	uint64_t rbp;
+	uint64_t rsi;
+	uint64_t rdi;
+	uint64_t r8;
+	uint64_t r9;
+	uint64_t r10;
+	uint64_t r11;
+	uint64_t r12;
+	uint64_t r13;
+	uint64_t r14;
+	uint64_t r15;
+} __attribute__((packed));
+
+struct hv_send_ipi {
+	uint32_t vector;
+	union hv_input_vtl in_vtl;
+	uint8_t reserved[3];
+	uint64_t cpu_mask;
+} __attribute__((packed));
+
+struct hv_vpset {
+	uint64_t format;
+	uint64_t valid_bank_mask;
+	uint64_t bank_contents[];
+} __attribute__((packed));
+
+/* The maximum number of sparse vCPU banks which can be encoded by 'struct hv_vpset' */
+#define HV_MAX_SPARSE_VCPU_BANKS (64)
+/* The number of vCPUs in one sparse bank */
+#define HV_VCPUS_PER_SPARSE_BANK (64)
+
+struct hv_send_ipi_ex {
+	uint32_t vector;
+	union hv_input_vtl in_vtl;
+	uint8_t reserved[3];
+	struct hv_vpset vp_set;
+} __attribute__((packed));
+
+struct hv_get_vp_index_from_apic_id_input {
+	uint64_t partition_id;
+	uint8_t target_vtl;
+	uint8_t _padding[7];
+} __attribute__((packed));
 
 #endif

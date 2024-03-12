@@ -50,6 +50,12 @@ static void async_synic_update(CPUState *cs, run_on_cpu_data data)
     bql_unlock();
 }
 
+int hyperv_x86_vsm_init(X86CPU *cpu)
+{
+    hyperv_vp_vsm_add(CPU(cpu));
+    return 0;
+}
+
 void hyperv_x86_vsm_reset(X86CPU *cpu)
 {
     hyperv_vsm_reset(CPU(cpu));
@@ -105,6 +111,9 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
         int ret;
 
         switch (code) {
+        case HV_SEND_IPI:
+            exit->u.hcall.result = hyperv_hcall_send_ipi(CPU(cpu), code, exit);
+            break;
         case HV_MODIFY_VTL_PROTECTION_MASK:
             exit->u.hcall.result = hyperv_hcall_vtl_protection_mask(CPU(cpu), exit);
             break;
@@ -128,6 +137,9 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
             if (ret < 0)
                 kvm_hv_inject_ud(CPU(cpu));
             return ret;
+        case HV_SEND_IPI_EX:
+            exit->u.hcall.result = hyperv_hcall_send_ipi(CPU(cpu), code, exit);
+            break;
         case HVCALL_GET_VP_REGISTERS:
           exit->u.hcall.result =
               hyperv_hcall_get_set_vp_register(CPU(cpu), exit, false);
@@ -135,6 +147,10 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
         case HVCALL_SET_VP_REGISTERS:
           exit->u.hcall.result =
               hyperv_hcall_get_set_vp_register(CPU(cpu), exit, true);
+          break;
+        case HV_TRANSLATE_VIRTUAL_ADDRESS:
+          exit->u.hcall.result =
+              hyperv_hcall_translate_virtual_address(CPU(cpu), exit);
           break;
         case HV_POST_MESSAGE:
             exit->u.hcall.result = hyperv_hcall_post_message(in_param, fast);
@@ -153,6 +169,14 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
         case HV_RESET_DEBUG_SESSION:
             exit->u.hcall.result =
                 hyperv_hcall_reset_dbg_session(out_param);
+            break;
+        case HV_START_VIRTUAL_PROCESSOR:
+            exit->u.hcall.result =
+                kvm_hv_start_virtual_processor(CPU(cpu), exit);
+            break;
+        case HV_GET_VP_INDEX_FROM_APIC_ID:
+            exit->u.hcall.result =
+                hyperv_hcall_get_vp_index_from_apic_id(CPU(cpu), exit);
             break;
         default:
             exit->u.hcall.result = HV_STATUS_INVALID_HYPERCALL_CODE;

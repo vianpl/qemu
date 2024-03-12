@@ -655,7 +655,7 @@ void hmp_info_local_apic(Monitor *mon, const QDict *qdict)
     if (qdict_haskey(qdict, "apic-id")) {
         int id = qdict_get_try_int(qdict, "apic-id", 0);
 
-        cs = cpu_by_arch_id(id);
+        cs = cpu_by_arch_id(id, 0);
         if (cs) {
             cpu_synchronize_state(cs);
         }

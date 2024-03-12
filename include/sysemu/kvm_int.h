@@ -39,6 +39,7 @@ typedef struct KVMMemoryUpdate {
 
 typedef struct KVMMemoryListener {
     MemoryListener listener;
+    KVMState *s;
     KVMSlot *slots;
     unsigned int nr_used_slots;
     int as_id;

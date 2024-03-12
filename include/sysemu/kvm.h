@@ -348,6 +348,7 @@ bool kvm_vcpu_id_is_valid(int vcpu_id);
 
 /* Returns VCPU ID to be used on KVM_CREATE_VCPU ioctl() */
 unsigned long kvm_arch_vcpu_id(CPUState *cpu);
+unsigned long kvm_arch_namespace(CPUState *cpu);
 
 #ifdef KVM_HAVE_MCE_INJECTION
 void kvm_arch_on_sigbus_vcpu(CPUState *cpu, int code, void *addr);
@@ -435,6 +436,7 @@ int kvm_vm_check_extension(KVMState *s, unsigned int extension);
         kvm_vcpu_ioctl(cpu, KVM_ENABLE_CAP, &cap);                   \
     })
 
+int kvm_init_companion_vm(MachineState *ms, KVMState *main, KVMState *comp);
 void kvm_set_sigmask_len(KVMState *s, unsigned int sigmask_len);
 
 int kvm_physical_memory_addr_from_host(KVMState *s, void *ram_addr,
@@ -445,6 +447,9 @@ int kvm_physical_memory_addr_from_host(KVMState *s, void *ram_addr,
 void kvm_cpu_synchronize_state(CPUState *cpu);
 
 void kvm_init_cpu_signals(CPUState *cpu);
+void kvm_region_add(MemoryListener *listener, MemoryRegionSection *section);
+void kvm_region_del(MemoryListener *listener, MemoryRegionSection *section);
+void kvm_region_commit(MemoryListener *listener);
 
 /**
  * kvm_irqchip_add_msi_route - Add MSI route for specific vector

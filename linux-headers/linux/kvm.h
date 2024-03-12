@@ -139,10 +139,10 @@ struct kvm_hyperv_exit {
 		struct {
 			__u64 input;
 			__u64 result;
-            __u64 ingpa;
-            __u64 outgpa;
-            #define HV_HYPERCALL_MAX_XMM_REGISTERS		6
-            __u64 xmm[HV_HYPERCALL_MAX_XMM_REGISTERS * 2];
+			__u64 ingpa;
+			__u64 outgpa;
+			#define HV_HYPERCALL_MAX_XMM_REGISTERS		6
+			__u64 xmm[HV_HYPERCALL_MAX_XMM_REGISTERS * 2];
 		} hcall;
 		struct {
 			__u32 msr;
@@ -232,7 +232,8 @@ struct kvm_run {
 	/* in */
 	__u8 request_interrupt_window;
 	__u8 immediate_exit;
-	__u8 padding1[6];
+	__u8 dump_state_on_run;
+	__u8 padding1[5];
 
 	/* out */
 	__u32 exit_reason;
@@ -464,16 +465,14 @@ struct kvm_run {
 		} notify;
 		/* KVM_EXIT_MEMORY_FAULT */
 		struct {
-#define KVM_MEMORY_EXIT_FLAG_NR		(1 << 0)
-#define KVM_MEMORY_EXIT_FLAG_NW		(1 << 1)
-#define KVM_MEMORY_EXIT_FLAG_NX		(1 << 2)
-#define KVM_MEMORY_EXIT_NO_ACCESS                            \
-	(KVM_MEMORY_EXIT_FLAG_NR | KVM_MEMORY_EXIT_FLAG_NW | \
-	 KVM_MEMORY_EXIT_FLAG_NX)
-#define KVM_MEMORY_EXIT_FLAG_PRIVATE	(1ULL << 3)
+#define KVM_MEMORY_EXIT_FLAG_READ		    (1ULL << 0)
+#define KVM_MEMORY_EXIT_FLAG_WRITE		    (1ULL << 1)
+#define KVM_MEMORY_EXIT_FLAG_EXECUTE		(1ULL << 2)
+#define KVM_MEMORY_EXIT_FLAG_PRIVATE	    (1ULL << 3)
 			__u64 flags;
 			__u64 gpa;
 			__u64 size;
+            __u8 exit_instruction_len;
 		} memory;
 		/* Fix the size of the union. */
 		char padding[256];
@@ -637,6 +636,7 @@ struct kvm_vapic_addr {
 #define KVM_MP_STATE_LOAD              8
 #define KVM_MP_STATE_AP_RESET_HOLD     9
 #define KVM_MP_STATE_SUSPENDED         10
+#define KVM_MP_STATE_HV_INACTIVE_VTL   11
 
 struct kvm_mp_state {
 	__u32 mp_state;
@@ -1160,7 +1160,6 @@ struct kvm_ppc_resize_hpt {
 #define KVM_CAP_MEMORY_ATTRIBUTES 233
 #define KVM_CAP_GUEST_MEMFD 234
 #define KVM_CAP_VM_TYPES 235
-#define KVM_CAP_HYPERV_VSM 237
 
 #ifdef KVM_CAP_IRQ_ROUTING
 
@@ -2223,6 +2222,9 @@ struct kvm_memory_attributes {
 	__u64 flags;
 };
 
+#define KVM_MEMORY_ATTRIBUTE_NR                (1ULL << 0)
+#define KVM_MEMORY_ATTRIBUTE_NW                (1ULL << 1)
+#define KVM_MEMORY_ATTRIBUTE_NX                (1ULL << 2)
 #define KVM_MEMORY_ATTRIBUTE_PRIVATE           (1ULL << 3)
 
 #define KVM_CREATE_GUEST_MEMFD	_IOWR(KVMIO,  0xd4, struct kvm_create_guest_memfd)
@@ -2232,20 +2234,5 @@ struct kvm_create_guest_memfd {
 	__u64 flags;
 	__u64 reserved[6];
 };
-
-#define KVM_SET_MEMORY_ATTRIBUTES              _IOW(KVMIO,  0xd2, struct kvm_memory_attributes)
-
-struct kvm_memory_attributes {
-	__u64 address;
-	__u64 size;
-	__u64 attributes;
-	__u64 flags;
-};
-
-#define KVM_MEMORY_ATTRIBUTE_READ              (1ULL << 0)
-#define KVM_MEMORY_ATTRIBUTE_WRITE             (1ULL << 1)
-#define KVM_MEMORY_ATTRIBUTE_EXECUTE           (1ULL << 2)
-#define KVM_MEMORY_ATTRIBUTE_PRIVATE           (1ULL << 3)
-#define KVM_MEMORY_ATTRIBUTE_NO_ACCESS         (1ULL << 4)
 
 #endif /* __LINUX_KVM_H */

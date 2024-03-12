@@ -220,7 +220,7 @@ static KVMSlot *kvm_lookup_matching_slot(KVMMemoryListener *kml,
                                          hwaddr start_addr,
                                          hwaddr size)
 {
-    KVMState *s = kvm_state;
+    KVMState *s = kml->s;
     int i;
 
     for (i = 0; i < s->nr_slots; i++) {
@@ -281,7 +281,7 @@ int kvm_physical_memory_addr_from_host(KVMState *s, void *ram,
 
 static int kvm_set_user_memory_region(KVMMemoryListener *kml, KVMSlot *slot, bool new)
 {
-    KVMState *s = kvm_state;
+    KVMState *s = kml->s;
     struct kvm_userspace_memory_region mem;
     int ret;
 
@@ -300,6 +300,7 @@ static int kvm_set_user_memory_region(KVMMemoryListener *kml, KVMSlot *slot, boo
         }
     }
     mem.memory_size = slot->memory_size;
+
     ret = kvm_vm_ioctl(s, KVM_SET_USER_MEMORY_REGION, &mem);
     slot->old_flags = mem.flags;
 err:
@@ -383,7 +384,7 @@ static int kvm_get_vcpu(KVMState *s, unsigned long vcpu_id)
 
 int kvm_init_vcpu(CPUState *cpu, Error **errp)
 {
-    KVMState *s = kvm_state;
+    KVMState *s = cpu->kvm_state ? : kvm_state;
     long mmap_size;
     int ret;
 
@@ -1269,6 +1270,7 @@ void kvm_set_max_memslot_size(hwaddr max_slot_size)
 static void kvm_set_phys_mem(KVMMemoryListener *kml,
                              MemoryRegionSection *section, bool add)
 {
+    KVMState *s = kml->s;
     KVMSlot *mem;
     int err;
     MemoryRegion *mr = section->mr;
@@ -1321,14 +1323,14 @@ static void kvm_set_phys_mem(KVMMemoryListener *kml,
                  *
                  * Not easy.  Let's cross the fingers until it's fixed.
                  */
-                if (kvm_state->kvm_dirty_ring_size) {
-                    kvm_dirty_ring_reap_locked(kvm_state, NULL);
-                    if (kvm_state->kvm_dirty_ring_with_bitmap) {
+                if (s->kvm_dirty_ring_size) {
+                    kvm_dirty_ring_reap_locked(s, NULL);
+                    if (s->kvm_dirty_ring_with_bitmap) {
                         kvm_slot_sync_dirty_pages(mem);
-                        kvm_slot_get_dirty_log(kvm_state, mem);
+                        kvm_slot_get_dirty_log(s, mem);
                     }
                 } else {
-                    kvm_slot_get_dirty_log(kvm_state, mem);
+                    kvm_slot_get_dirty_log(s, mem);
                 }
                 kvm_slot_sync_dirty_pages(mem);
             }
@@ -1487,7 +1489,7 @@ static int kvm_dirty_ring_init(KVMState *s)
     return 0;
 }
 
-static void kvm_region_add(MemoryListener *listener,
+void kvm_region_add(MemoryListener *listener,
                            MemoryRegionSection *section)
 {
     KVMMemoryListener *kml = container_of(listener, KVMMemoryListener, listener);
@@ -1499,7 +1501,7 @@ static void kvm_region_add(MemoryListener *listener,
     QSIMPLEQ_INSERT_TAIL(&kml->transaction_add, update, next);
 }
 
-static void kvm_region_del(MemoryListener *listener,
+void kvm_region_del(MemoryListener *listener,
                            MemoryRegionSection *section)
 {
     KVMMemoryListener *kml = container_of(listener, KVMMemoryListener, listener);
@@ -1511,7 +1513,7 @@ static void kvm_region_del(MemoryListener *listener,
     QSIMPLEQ_INSERT_TAIL(&kml->transaction_del, update, next);
 }
 
-static void kvm_region_commit(MemoryListener *listener)
+void kvm_region_commit(MemoryListener *listener)
 {
     KVMMemoryListener *kml = container_of(listener, KVMMemoryListener,
                                           listener);
@@ -1732,6 +1734,7 @@ void kvm_memory_listener_register(KVMState *s, KVMMemoryListener *kml,
     QSIMPLEQ_INIT(&kml->transaction_add);
     QSIMPLEQ_INIT(&kml->transaction_del);
 
+    kml->s = s;
     kml->listener.region_add = kvm_region_add;
     kml->listener.region_del = kvm_region_del;
     kml->listener.commit = kvm_region_commit;
@@ -2614,6 +2617,54 @@ err:
     g_free(s->memory_listener.slots);
 
     return ret;
+}
+
+int kvm_init_companion_vm(MachineState *ms, KVMState *main, KVMState *comp)
+{
+    int ret;
+
+    comp->fd = main->fd;
+
+    do {
+        ret = kvm_ioctl(comp, KVM_CREATE_VM, 0);
+    } while (ret == -EINTR);
+
+    if (ret < 0) {
+        fprintf(stderr, "ioctl(KVM_CREATE_VM) failed: %d %s\n", -ret,
+                strerror(-ret));
+        return ret;
+    }
+
+    comp->nr_slots = main->nr_slots;
+    comp->vmfd = ret;
+    comp->coalesced_mmio = main->coalesced_mmio;
+    comp->coalesced_pio = main->coalesced_pio;
+    comp->vcpu_events = main->vcpu_events;
+    comp->max_nested_state_len = main->max_nested_state_len;
+    comp->kvm_shadow_mem = main->kvm_shadow_mem;
+    comp->kernel_irqchip_allowed = main->kernel_irqchip_allowed;
+    comp->kernel_irqchip_required = main->kernel_irqchip_required;
+    comp->kernel_irqchip_split = main->kernel_irqchip_split;
+    comp->kernel_irqchip_split = main->kernel_irqchip_split;
+    comp->sync_mmu = main->sync_mmu;
+    comp->irq_set_ioctl = main->irq_set_ioctl;
+    comp->sigmask_len = main->sigmask_len;
+    comp->nr_as = main->nr_as;
+    comp->notify_vmexit = main->notify_vmexit;
+    comp->notify_window = main->notify_window;
+
+    bql_lock();
+    ret = kvm_arch_init(ms, comp);
+    if (ret) {
+        printf("Failed to init arch for companion VM, %d\n", ret);
+        return ret;
+    }
+    bql_unlock();
+
+    if (comp->kernel_irqchip_allowed)
+        kvm_irqchip_create(comp);
+
+    return 0;
 }
 
 void kvm_set_sigmask_len(KVMState *s, unsigned int sigmask_len)

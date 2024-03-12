@@ -29,6 +29,7 @@
 #include "exec/hwaddr.h"
 #endif
 #include "exec/memattrs.h"
+#include "exec/faultattrs.h"
 #include "hw/core/cpu.h"
 
 #include "cpu-param.h"

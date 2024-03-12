@@ -24,7 +24,7 @@ typedef struct HvSintRoute HvSintRoute;
  */
 typedef void (*HvSintMsgCb)(void *data, int status);
 
-HvSintRoute *hyperv_sint_route_new(uint32_t vp_index, uint32_t sint,
+HvSintRoute *hyperv_sint_route_new(uint32_t vp_index, uint8_t vtl, uint32_t sint,
                                    HvSintMsgCb cb, void *cb_data);
 void hyperv_sint_route_ref(HvSintRoute *sint_route);
 void hyperv_sint_route_unref(HvSintRoute *sint_route);
@@ -61,19 +61,26 @@ int hyperv_set_msg_handler(uint32_t conn_id, HvMsgHandler handler, void *data);
  */
 int hyperv_set_event_flag_handler(uint32_t conn_id, EventNotifier *notifier);
 
-int hyperv_init_vsm(struct KVMState *s);
+int hyperv_init_vsm(CPUState *cs);
 uint64_t hyperv_hcall_vtl_protection_mask(CPUState *cs, struct kvm_hyperv_exit *exit);
 uint16_t hyperv_hcall_vtl_enable_partition_vtl(CPUState *cs, uint64_t param1,
                                                uint64_t param2, bool fast);
+int hyperv_vcpu_event_callback(CPUState *cpu);
 int hyperv_hcall_vtl_call(CPUState *cs);
 int hyperv_hcall_vtl_return(CPUState *cs);
 void hyperv_vsm_reset(CPUState *cpu);
 uint64_t hyperv_hcall_get_set_vp_register(CPUState *cs, struct kvm_hyperv_exit *exit,
                                           bool set);
+uint64_t hyperv_hcall_translate_virtual_address(CPUState *cs, struct kvm_hyperv_exit *exit);
 uint16_t hyperv_hcall_vtl_enable_vp_vtl(CPUState *cs, uint64_t param, bool fast);
 
 void hyperv_setup_vp_assist(CPUState *cs, uint64_t gpa);
-int kvm_hv_handle_fault(CPUState *cs, uint64_t gpa, uint64_t size, uint64_t flags);
+int kvm_hv_handle_fault(CPUState *cs, uint64_t gpa, uint64_t size,
+                        uint64_t flags, uint8_t exit_instruction_len);
+
+uint64_t hyperv_hcall_send_ipi(CPUState *cs, int code, struct kvm_hyperv_exit *exit);
+uint64_t hyperv_hcall_get_vp_index_from_apic_id(CPUState *cs, struct kvm_hyperv_exit *exit);
+uint64_t kvm_hv_start_virtual_processor(CPUState *cs, struct kvm_hyperv_exit *exit);
 
 /*
  * Process HV_POST_MESSAGE hypercall: parse the data in the guest memory as
@@ -89,20 +96,16 @@ uint16_t hyperv_hcall_signal_event(uint64_t param, bool fast);
 
 static inline uint32_t hyperv_vp_index(CPUState *cs)
 {
-    return x86_get_phys_apic_id(cs->cpu_index);
+    return cs->cc->get_arch_id(cs);
 }
 
-static inline int hyperv_vsm_vp_index(CPUState *cs)
+static inline CPUState *hyperv_vsm_vcpu(uint32_t arch_id, uint32_t vtl)
 {
-    return hyperv_vp_index(cs);
-}
-
-static inline CPUState *hyperv_vsm_vcpu(uint32_t vp_index, uint32_t vtl)
-{
-    CPUState *cs = cpu_by_arch_id(x86_apic_id_set_group(vp_index, vtl));
+    CPUState *cs = cpu_by_arch_id(arch_id, vtl);
     assert(cs);
     return cs;
 }
+void hyperv_vp_vsm_add(CPUState *cs);
 
 void hyperv_synic_add(CPUState *cs);
 void hyperv_synic_reset(CPUState *cs);

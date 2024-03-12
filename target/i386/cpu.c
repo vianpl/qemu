@@ -7923,6 +7923,7 @@ static Property x86_cpu_properties[] = {
      */
     DEFINE_PROP_BOOL("legacy-cache", X86CPU, legacy_cache, true),
     DEFINE_PROP_BOOL("xen-vapic", X86CPU, xen_vapic, false),
+    DEFINE_PROP_UINT32("namespace", X86CPU, namespace, 0),
 
     /*
      * From "Requirements for Implementing the Microsoft

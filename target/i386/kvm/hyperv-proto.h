@@ -312,7 +312,7 @@ struct hv_init_vp_context {
 struct hv_enable_vp_vtl {
 	uint64_t partition_id;
 	uint32_t vp_index;
-	union hv_input_vtl target_vtl;
+	uint8_t target_vtl;
 	uint8_t	mbz0;
 	uint16_t mbz1;
 	struct hv_init_vp_context vp_context;
@@ -368,5 +368,10 @@ union hv_x64_pending_exception_event {
 		uint64_t exception_parameter;
 	};
 };
+
+#define HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_SHIFT	12
+#define HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_MASK	\
+		(~((1ull << HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_SHIFT) - 1))
+
 
 #endif
