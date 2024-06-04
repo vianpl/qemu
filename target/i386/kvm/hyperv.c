@@ -148,6 +148,10 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
           exit->u.hcall.result =
               hyperv_hcall_get_set_vp_register(CPU(cpu), exit, true);
           break;
+        case HV_TRANSLATE_VIRTUAL_ADDRESS:
+          exit->u.hcall.result =
+              hyperv_hcall_translate_virtual_address(CPU(cpu), exit);
+          break;
         case HV_POST_MESSAGE:
             exit->u.hcall.result = hyperv_hcall_post_message(in_param, fast);
             break;
