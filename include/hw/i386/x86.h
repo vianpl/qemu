@@ -99,7 +99,7 @@ OBJECT_DECLARE_TYPE(X86MachineState, X86MachineClass, X86_MACHINE)
 uint32_t x86_cpu_apic_id_from_index(X86MachineState *pcms,
                                     unsigned int cpu_index);
 
-void x86_cpu_new(X86MachineState *pcms, int64_t apic_id, Error **errp);
+void x86_cpu_new(X86MachineState *x86ms, int namespace, int64_t apic_id, Error **errp);
 void x86_cpus_init(X86MachineState *pcms, int default_cpu_version);
 CpuInstanceProperties x86_cpu_index_to_props(MachineState *ms,
                                              unsigned cpu_index);

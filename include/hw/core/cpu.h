@@ -944,7 +944,7 @@ bool cpu_exists(int64_t id);
  *
  * Returns: The CPU or %NULL if there is no matching CPU.
  */
-CPUState *cpu_by_arch_id(int64_t id);
+CPUState *cpu_by_arch_id(int64_t id, int32_t ns);
 
 /**
  * cpu_interrupt:

@@ -36,12 +36,15 @@
 #include "trace.h"
 #include "qemu/plugin.h"
 
-CPUState *cpu_by_arch_id(int64_t id)
+CPUState *cpu_by_arch_id(int64_t id, int32_t ns)
 {
     CPUState *cpu;
 
     CPU_FOREACH(cpu) {
         CPUClass *cc = CPU_GET_CLASS(cpu);
+
+        if (object_property_get_int(OBJECT(cpu), "namespace", &error_abort) != ns)
+            continue;
 
         if (cc->get_arch_id(cpu) == id) {
             return cpu;
@@ -52,7 +55,7 @@ CPUState *cpu_by_arch_id(int64_t id)
 
 bool cpu_exists(int64_t id)
 {
-    return !!cpu_by_arch_id(id);
+    return !!cpu_by_arch_id(id, 0);
 }
 
 CPUState *cpu_create(const char *typename)

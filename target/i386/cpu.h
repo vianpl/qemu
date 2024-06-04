@@ -2044,6 +2044,7 @@ struct ArchCPU {
     int32_t hv_max_vps;
 
     bool xen_vapic;
+    uint32_t namespace;
 };
 
 typedef struct X86CPUModel X86CPUModel;
