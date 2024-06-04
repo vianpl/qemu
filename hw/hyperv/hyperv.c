@@ -48,6 +48,18 @@ OBJECT_DECLARE_SIMPLE_TYPE(SynICState, SYNIC)
 
 static bool synic_enabled;
 
+static MemTxResult hyperv_physmem_write(CPUState *cs, hwaddr addr,
+                                        const void *buf, hwaddr len)
+{
+    return address_space_write(cs->as, addr, MEMTXATTRS_UNSPECIFIED, buf, len);
+}
+
+static MemTxResult hyperv_physmem_read(CPUState *cs, hwaddr addr,
+                                       void *buf, hwaddr len)
+{
+    return address_space_read(cs->as, addr, MEMTXATTRS_UNSPECIFIED, buf, len);
+}
+
 bool hyperv_is_synic_enabled(void)
 {
     return synic_enabled;
