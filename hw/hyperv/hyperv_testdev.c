@@ -72,7 +72,7 @@ static void sint_route_create(HypervTestDev *dev,
     sint_route->vp_index = vp_index;
     sint_route->sint = sint;
 
-    sint_route->sint_route = hyperv_sint_route_new(vp_index, sint, NULL, NULL);
+    sint_route->sint_route = hyperv_sint_route_new(vp_index, 0, sint, NULL, NULL);
     assert(sint_route->sint_route);
 
     QLIST_INSERT_HEAD(&dev->sint_routes, sint_route, le);
@@ -166,7 +166,7 @@ static void msg_conn_create(HypervTestDev *dev, uint8_t vp_index,
 
     conn->conn_id = conn_id;
 
-    conn->sint_route = hyperv_sint_route_new(vp_index, sint, msg_cb, conn);
+    conn->sint_route = hyperv_sint_route_new(vp_index, 0, sint, msg_cb, conn);
     assert(conn->sint_route);
 
     assert(!hyperv_set_msg_handler(conn->conn_id, msg_handler, conn));
@@ -210,7 +210,7 @@ static void evt_conn_create(HypervTestDev *dev, uint8_t vp_index,
 
     conn->conn_id = conn_id;
 
-    conn->sint_route = hyperv_sint_route_new(vp_index, sint, NULL, NULL);
+    conn->sint_route = hyperv_sint_route_new(vp_index, 0, sint, NULL, NULL);
     assert(conn->sint_route);
 
     assert(!event_notifier_init(&conn->notifier, false));
