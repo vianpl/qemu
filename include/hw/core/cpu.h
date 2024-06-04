@@ -25,6 +25,7 @@
 #include "exec/hwaddr.h"
 #include "exec/vaddr.h"
 #include "exec/memattrs.h"
+#include "exec/faultattrs.h"
 #include "exec/tlb-common.h"
 #include "qapi/qapi-types-run-state.h"
 #include "qemu/bitmap.h"
@@ -707,6 +708,7 @@ void cpu_dump_state(CPUState *cpu, FILE *f, int flags);
  * @addr: The virtual address.
  * @attrs: Updated on return with the memory transaction attributes to use
  *         for this access.
+ * @access: Updated on return with the fault attributes to use for this access.
  *
  * Obtains the physical page corresponding to a virtual one, together
  * with the corresponding memory transaction attributes to use for the access.
@@ -715,7 +717,7 @@ void cpu_dump_state(CPUState *cpu, FILE *f, int flags);
  * Returns: Corresponding physical page address or -1 if no page found.
  */
 hwaddr cpu_get_phys_page_attrs_debug(CPUState *cpu, vaddr addr,
-                                     MemTxAttrs *attrs);
+                                     MemTxAttrs *attrs, MemFaultAttrs *access);
 
 /**
  * cpu_get_phys_page_debug:
