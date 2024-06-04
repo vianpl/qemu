@@ -2604,6 +2604,93 @@ uint64_t hyperv_hcall_get_vp_index_from_apic_id(CPUState *cs, struct kvm_hyperv_
 
     return ((uint64_t)count << HV_HYPERCALL_REP_COMP_OFFSET) | HV_STATUS_SUCCESS;
 }
+
+static void __do_cpu_init(CPUState *cs, run_on_cpu_data arg)
+{
+    do_cpu_init(X86_CPU(cs));
+}
+
+uint64_t kvm_hv_start_virtual_processor(CPUState *cs, struct kvm_hyperv_exit *exit)
+{
+    uint16_t rep_idx = (exit->u.hcall.input >> HV_HYPERCALL_REP_START_OFFSET) & 0xfff;
+    uint16_t rep_cnt = (exit->u.hcall.input >> HV_HYPERCALL_REP_COMP_OFFSET) & 0xfff;
+    bool fast = exit->u.hcall.input & HV_HYPERCALL_FAST;
+    uint8_t current_vtl = get_active_vtl(cs);
+    struct hv_enable_vp_vtl input;
+    VpVsmState *vpvsm;
+    CPUState *vcpu;
+
+    /* HvStartVirtualProcessor cannot be fast or rep */
+    if (fast || !!(rep_cnt || rep_idx))
+        return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+    hyperv_physmem_read(cs, exit->u.hcall.ingpa, &input, sizeof(input));
+
+    trace_hyperv_hcall_start_virtual_processor(input.partition_id, input.vp_index,
+                                               input.target_vtl, current_vtl);
+    printf("vp init: partition_id 0x%lx, VP index %u, target vtl %u, active vtl %u\n",
+           input.partition_id, input.vp_index, input.target_vtl, current_vtl);
+
+    /* Only self-targeting is supported */
+    if (input.partition_id != HV_PARTITION_ID_SELF)
+        return HV_STATUS_INVALID_PARTITION_ID;
+
+    /* AP must not be in any initialized or runnable states */
+    for (int i = input.target_vtl - 1; i >= 0; i--) {
+        vcpu = hyperv_vsm_vcpu(input.vp_index, i);
+        if (!vcpu || !cpu_is_stopped(vcpu) || cpu_is_bsp(X86_CPU(vcpu)))
+            return HV_STATUS_INVALID_VP_STATE;
+
+        /* Is target VTL already enabled for target vcpu? */
+        vpvsm = get_vp_vsm(vcpu);
+        if (input.target_vtl > 0 &&
+            vpvsm->vsm_vp_status.enabled_vtl_set & (1ul << input.target_vtl)) {
+            return HV_STATUS_INVALID_PARAMETER;
+        }
+    }
+
+    /* Check that target VTL is sane and can enable target vcpu in target vtl */
+    if (input.target_vtl > hv_vsm_partition_status.maximum_vtl ||
+        input.target_vtl > current_vtl) {
+          printf("Current vcpu in VTL%d cannot enable target vcpu in VTL%d\n",
+                 input.target_vtl, current_vtl);
+          return HV_STATUS_INVALID_PARAMETER;
+    }
+
+    vpvsm = get_vp_vsm(hyperv_vsm_vcpu(input.vp_index, 0));
+    if (!(vpvsm->vsm_vp_status.enabled_vtl_set & (1 << input.target_vtl)))
+        return HV_STATUS_INVALID_PARAMETER;
+
+    vcpu = hyperv_vsm_vcpu(input.vp_index, input.target_vtl);
+    if (!vcpu)
+        return HV_STATUS_INVALID_PARAMETER;
+
+    bql_lock();
+    kvm_cpu_synchronize_state(vcpu);
+    vcpu->stop = true;
+    run_on_cpu(vcpu, __do_cpu_init, RUN_ON_CPU_NULL);
+    bql_unlock();
+
+    input.vp_context.efer |= (1 << 10); // EFER_LMA
+    print_hv_init_vp_context(&input.vp_context);
+    hyperv_set_vtl_cpu_state(vcpu, &input.vp_context, true);
+
+    bql_lock();
+    cpu_synchronize_post_reset(vcpu);
+    bql_unlock();
+
+    vpvsm = get_vp_vsm(hyperv_vsm_vcpu(input.vp_index, 0));
+    vpvsm->vsm_vp_status.enabled_vtl_set |= 1 << input.target_vtl;
+    hv_vsm.vtl_enabled_for_vps |= 1 << input.target_vtl;
+
+    // TODO: Should be highest enabled VTL, not 1
+
+    hyperv_vsm_vcpu(input.vp_index, input.target_vtl)->kvm_run->dump_state_on_run = true;
+    cpu_resume(hyperv_vsm_vcpu(input.vp_index, input.target_vtl));
+
+    return HV_STATUS_SUCCESS;
+}
+
 uint16_t hyperv_hcall_post_message(uint64_t param, bool fast)
 {
     uint16_t ret;

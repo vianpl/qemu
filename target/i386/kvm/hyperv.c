@@ -167,6 +167,10 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
             exit->u.hcall.result =
                 hyperv_hcall_reset_dbg_session(out_param);
             break;
+        case HV_START_VIRTUAL_PROCESSOR:
+            exit->u.hcall.result =
+                kvm_hv_start_virtual_processor(CPU(cpu), exit);
+            break;
         case HV_GET_VP_INDEX_FROM_APIC_ID:
             exit->u.hcall.result =
                 hyperv_hcall_get_vp_index_from_apic_id(CPU(cpu), exit);
