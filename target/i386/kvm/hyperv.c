@@ -111,6 +111,9 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
         int ret;
 
         switch (code) {
+        case HV_SEND_IPI:
+            exit->u.hcall.result = hyperv_hcall_send_ipi(CPU(cpu), code, exit);
+            break;
         case HV_MODIFY_VTL_PROTECTION_MASK:
             exit->u.hcall.result = hyperv_hcall_vtl_protection_mask(CPU(cpu), exit);
             break;
@@ -134,6 +137,9 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
             if (ret < 0)
                 kvm_hv_inject_ud(CPU(cpu));
             return ret;
+        case HV_SEND_IPI_EX:
+            exit->u.hcall.result = hyperv_hcall_send_ipi(CPU(cpu), code, exit);
+            break;
         case HVCALL_GET_VP_REGISTERS:
           exit->u.hcall.result =
               hyperv_hcall_get_set_vp_register(CPU(cpu), exit, false);

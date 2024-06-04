@@ -23,6 +23,8 @@
 #include "hw/hyperv/hyperv.h"
 #include "hw/i386/x86.h"
 #include "hw/i386/apic_internal.h"
+#include "hw/pci/msi.h"
+#include "hw/i386/apic-msidef.h"
 #include "qom/object.h"
 #include "target/i386/kvm/hyperv-proto.h"
 #include "target/i386/cpu.h"
@@ -2415,6 +2417,145 @@ int kvm_hv_handle_fault(CPUState *cs, uint64_t gpa, uint64_t size,
     return EXCP_HALTED;
 }
 
+static uint64_t hyperv_get_sparse_vp_set(CPUState *cs, struct kvm_hyperv_exit *exit,
+                                         bool fast, uint16_t cnt, uint64_t *data,
+                                         int consumed_xmm_halves)
+{
+    uint64_t in_addr;
+	int i;
+
+	if (cnt > HV_MAX_SPARSE_VCPU_BANKS)
+		return -EINVAL;
+
+	if (fast) {
+		/*
+		 * Each XMM holds two sparse banks, but do not count halves that
+		 * have already been consumed for hypercall parameters.
+		 */
+		if (cnt > 2 * HV_HYPERCALL_MAX_XMM_REGISTERS - consumed_xmm_halves)
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+		for (i = 0; i < cnt; i++)
+            data[i] = exit->u.hcall.xmm[i + consumed_xmm_halves];
+
+		return 0;
+	}
+
+    in_addr = exit->u.hcall.ingpa + offsetof(struct hv_send_ipi_ex, vp_set.bank_contents);
+	return hyperv_physmem_read(cs, in_addr, data, cnt * sizeof(*data));
+}
+
+static bool hyperv_is_vp_in_sparse_set(uint32_t vp_id, uint64_t valid_bank_mask,
+                                       uint64_t sparse_banks[])
+{
+	int valid_bit_nr = vp_id / HV_VCPUS_PER_SPARSE_BANK;
+	unsigned long sbank;
+
+	if (!test_bit(valid_bit_nr, (unsigned long *)&valid_bank_mask))
+		return false;
+
+	/*
+	 * The index into the sparse bank is the number of preceding bits in
+	 * the valid mask.  Optimize for VMs with <64 vCPUs by skipping the
+	 * fancy math if there can't possibly be preceding bits.
+	 */
+	if (valid_bit_nr)
+		sbank = hweight64(valid_bank_mask & MAKE_64BIT_MASK(0, valid_bit_nr - 1));
+	else
+		sbank = 0;
+
+	return test_bit(vp_id % HV_VCPUS_PER_SPARSE_BANK,
+			(unsigned long *)&sparse_banks[sbank]);
+}
+
+uint64_t hyperv_hcall_send_ipi(CPUState *cs, int code, struct kvm_hyperv_exit *exit)
+{
+    uint16_t var_cnt = (exit->u.hcall.input & HV_HYPERCALL_VARHEAD_MASK) >>
+                       HV_HYPERCALL_VARHEAD_OFFSET;
+    bool fast = exit->u.hcall.input & HV_HYPERCALL_FAST;
+    uint64_t sparse_banks[HV_MAX_SPARSE_VCPU_BANKS];
+    uint64_t ingpa = exit->u.hcall.ingpa;
+    struct hv_send_ipi_ex send_ipi_ex;
+    CPUClass *cc = CPU_GET_CLASS(cs);
+    struct hv_send_ipi send_ipi;
+    union hv_input_vtl in_vtl;
+    uint64_t valid_bank_mask;
+    bool all_cpus = false;
+    CPUState *target_cs;
+    uint32_t vector;
+
+    if (code == HV_SEND_IPI) {
+        if (fast) {
+            vector = (uint32_t)ingpa;
+            in_vtl.as_uint8 = (uint8_t)(ingpa >> 32);
+            sparse_banks[0] = exit->u.hcall.outgpa;
+        } else {
+            hyperv_physmem_read(cs, ingpa, &send_ipi, sizeof(send_ipi));
+            vector = send_ipi.vector;
+            in_vtl.as_uint8 = send_ipi.in_vtl.as_uint8;
+            sparse_banks[0] = send_ipi.cpu_mask;
+        }
+
+        valid_bank_mask = BIT_ULL(0);
+
+        printf("VTL PV IPI from VTL%d to VTL%d, vec %d cpu_mask %lx\n",
+               get_active_vtl(cs), in_vtl.target_vtl, vector, sparse_banks[0]);
+
+        trace_hyperv_hcall_send_ipi(hyperv_vp_index(cs), vector,
+                                    get_active_vtl(cs), in_vtl.target_vtl,
+                                    sparse_banks[0]);
+    } else {
+        if (fast) {
+            vector = (uint32_t)exit->u.hcall.ingpa;
+            in_vtl.as_uint8 = (uint8_t)(exit->u.hcall.ingpa >> 32);
+            send_ipi_ex.vp_set.format = exit->u.hcall.outgpa;
+            valid_bank_mask = exit->u.hcall.xmm[0];
+        } else {
+            hyperv_physmem_read(cs, ingpa, &send_ipi_ex, sizeof(send_ipi_ex));
+            vector = send_ipi_ex.vector;
+            in_vtl.as_uint8 = send_ipi_ex.in_vtl.as_uint8;
+            valid_bank_mask = send_ipi_ex.vp_set.valid_bank_mask;
+        }
+
+        all_cpus = send_ipi_ex.vp_set.format == HV_GENERIC_SET_ALL;
+        if (all_cpus)
+            goto check_and_send_ipi;
+
+        if (hyperv_get_sparse_vp_set(cs, exit, fast, var_cnt, sparse_banks, 1))
+            return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+        printf("VTL PV IPI EX from VTL%d to VTL%d, vec %d format %lx, mask %lx, allcpus %d, bank0 %lx, bank1 %lx\n",
+               get_active_vtl(cs), in_vtl.target_vtl, vector,
+               send_ipi_ex.vp_set.format, valid_bank_mask, all_cpus,
+               sparse_banks[0], sparse_banks[1]);
+        trace_hyperv_hcall_send_ipi_ex( hyperv_vp_index(cs), vector,
+                get_active_vtl(cs), in_vtl.target_vtl, all_cpus, valid_bank_mask,
+                sparse_banks[0], sparse_banks[1]);
+    }
+
+check_and_send_ipi:
+    if ((vector < HV_IPI_LOW_VECTOR) || (vector > HV_IPI_HIGH_VECTOR))
+        return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+    CPU_FOREACH(target_cs) {
+        if (get_active_vtl(target_cs) != in_vtl.target_vtl)
+            continue;
+
+        if (!all_cpus && !hyperv_is_vp_in_sparse_set(hyperv_vp_index(target_cs),
+                                                     valid_bank_mask, sparse_banks))
+            continue;
+
+        printf("IPI sent to CPU %d VTL %d\n", hyperv_vp_index(target_cs), in_vtl.target_vtl);
+        MSIMessage msg = {
+            .address = APIC_DEFAULT_ADDRESS |
+                       (cc->get_arch_id(target_cs) << MSI_ADDR_DEST_ID_SHIFT),
+            .data = vector,
+        };
+        kvm_irqchip_send_msi(target_cs->kvm_state, msg);
+    }
+
+    return HV_STATUS_SUCCESS;
+}
 uint16_t hyperv_hcall_post_message(uint64_t param, bool fast)
 {
     uint16_t ret;
