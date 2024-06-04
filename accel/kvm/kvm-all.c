@@ -1487,7 +1487,7 @@ static int kvm_dirty_ring_init(KVMState *s)
     return 0;
 }
 
-static void kvm_region_add(MemoryListener *listener,
+void kvm_region_add(MemoryListener *listener,
                            MemoryRegionSection *section)
 {
     KVMMemoryListener *kml = container_of(listener, KVMMemoryListener, listener);
@@ -1499,7 +1499,7 @@ static void kvm_region_add(MemoryListener *listener,
     QSIMPLEQ_INSERT_TAIL(&kml->transaction_add, update, next);
 }
 
-static void kvm_region_del(MemoryListener *listener,
+void kvm_region_del(MemoryListener *listener,
                            MemoryRegionSection *section)
 {
     KVMMemoryListener *kml = container_of(listener, KVMMemoryListener, listener);
@@ -1511,7 +1511,7 @@ static void kvm_region_del(MemoryListener *listener,
     QSIMPLEQ_INSERT_TAIL(&kml->transaction_del, update, next);
 }
 
-static void kvm_region_commit(MemoryListener *listener)
+void kvm_region_commit(MemoryListener *listener)
 {
     KVMMemoryListener *kml = container_of(listener, KVMMemoryListener,
                                           listener);

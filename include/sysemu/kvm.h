@@ -440,6 +440,9 @@ int kvm_physical_memory_addr_from_host(KVMState *s, void *ram_addr,
 void kvm_cpu_synchronize_state(CPUState *cpu);
 
 void kvm_init_cpu_signals(CPUState *cpu);
+void kvm_region_add(MemoryListener *listener, MemoryRegionSection *section);
+void kvm_region_del(MemoryListener *listener, MemoryRegionSection *section);
+void kvm_region_commit(MemoryListener *listener);
 
 /**
  * kvm_irqchip_add_msi_route - Add MSI route for specific vector
