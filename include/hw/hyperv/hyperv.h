@@ -76,6 +76,7 @@ uint16_t hyperv_hcall_vtl_enable_vp_vtl(CPUState *cs, uint64_t param, bool fast)
 int kvm_hv_handle_fault(CPUState *cs, uint64_t gpa, uint64_t size,
                         uint64_t flags, uint8_t exit_instruction_len);
 
+uint64_t hyperv_hcall_send_ipi(CPUState *cs, int code, struct kvm_hyperv_exit *exit);
 
 /*
  * Process HV_POST_MESSAGE hypercall: parse the data in the guest memory as
