@@ -17,6 +17,7 @@ hyperv_setup_hypercall_page(uint32_t vp_index, uint8_t vtl, bool enable, uint64_
 hyperv_handle_fault(uint32_t vp_index, int vtl, uint64_t gpa, uint64_t size, uint8_t insn_len, uint64_t flags, uint64_t prots) "VP index %d, vtl %d, gpa 0x%lx, size 0x%lx, insn len %u, flags 0x%lx, vtl prots 0x%lx"
 hyperv_hcall_send_ipi(uint32_t vp_index, uint32_t vector, uint8_t from, uint8_t to, uint64_t cpu_mask) "VP index %u, vector %u, from vtl %u to vtl %u, cpu_mask 0x%lx"
 hyperv_hcall_send_ipi_ex(uint32_t vp_index, uint32_t vector, uint8_t from, uint8_t to, uint8_t all_cpus, uint64_t valid_bank_mask, uint64_t bank0, uint64_t bank1) "VP index %u, vector %u, from vtl %u to vtl %d, all cpus %d, bank mask 0x%lx, bank0 0x%lx, bank1 0x%lx"
+hyperv_hvcall_get_vp_index_from_apic_id(uint64_t partition_id, uint8_t vtl, uint32_t apic_id, uint32_t vp_index) "partition_id %lx, vtl %u, apic_id 0x%x, VP index %u"
 
 # vmbus.c
 vmbus_recv_message(uint32_t type, uint32_t size) "type %d size %d"
