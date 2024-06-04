@@ -2490,6 +2490,10 @@ static void register_smram_listener(Notifier *n, void *unused)
     MemoryRegion *smram =
         (MemoryRegion *) object_resolve_path("/machine/smram", NULL);
 
+    /* We're in a multi KVMState VM, only enable SMM on the main KVMState */
+    if (smram_as_mem.container)
+        return;
+
     /* Outer container... */
     memory_region_init(&smram_as_root, OBJECT(kvm_state), "mem-container-smram", ~0ull);
     memory_region_set_enabled(&smram_as_root, true);
