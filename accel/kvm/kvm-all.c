@@ -220,7 +220,7 @@ static KVMSlot *kvm_lookup_matching_slot(KVMMemoryListener *kml,
                                          hwaddr start_addr,
                                          hwaddr size)
 {
-    KVMState *s = kvm_state;
+    KVMState *s = kml->s;
     int i;
 
     for (i = 0; i < s->nr_slots; i++) {
@@ -281,7 +281,7 @@ int kvm_physical_memory_addr_from_host(KVMState *s, void *ram,
 
 static int kvm_set_user_memory_region(KVMMemoryListener *kml, KVMSlot *slot, bool new)
 {
-    KVMState *s = kvm_state;
+    KVMState *s = kml->s;
     struct kvm_userspace_memory_region mem;
     int ret;
 
@@ -1269,6 +1269,7 @@ void kvm_set_max_memslot_size(hwaddr max_slot_size)
 static void kvm_set_phys_mem(KVMMemoryListener *kml,
                              MemoryRegionSection *section, bool add)
 {
+    KVMState *s = kml->s;
     KVMSlot *mem;
     int err;
     MemoryRegion *mr = section->mr;
@@ -1321,14 +1322,14 @@ static void kvm_set_phys_mem(KVMMemoryListener *kml,
                  *
                  * Not easy.  Let's cross the fingers until it's fixed.
                  */
-                if (kvm_state->kvm_dirty_ring_size) {
-                    kvm_dirty_ring_reap_locked(kvm_state, NULL);
-                    if (kvm_state->kvm_dirty_ring_with_bitmap) {
+                if (s->kvm_dirty_ring_size) {
+                    kvm_dirty_ring_reap_locked(s, NULL);
+                    if (s->kvm_dirty_ring_with_bitmap) {
                         kvm_slot_sync_dirty_pages(mem);
-                        kvm_slot_get_dirty_log(kvm_state, mem);
+                        kvm_slot_get_dirty_log(s, mem);
                     }
                 } else {
-                    kvm_slot_get_dirty_log(kvm_state, mem);
+                    kvm_slot_get_dirty_log(s, mem);
                 }
                 kvm_slot_sync_dirty_pages(mem);
             }
@@ -1732,6 +1733,7 @@ void kvm_memory_listener_register(KVMState *s, KVMMemoryListener *kml,
     QSIMPLEQ_INIT(&kml->transaction_add);
     QSIMPLEQ_INIT(&kml->transaction_del);
 
+    kml->s = s;
     kml->listener.region_add = kvm_region_add;
     kml->listener.region_del = kvm_region_del;
     kml->listener.commit = kvm_region_commit;
