@@ -1,6 +1,13 @@
 # hyperv.c
 hyperv_hcall_vtl_enable_partition_vtl(uint64_t target_partition_id, uint8_t target_vtl, uint8_t flags) "target partition id 0x%lx, target VTL %d, flags 0x%hhx"
 hyperv_hcall_vtl_enable_vp_vtl(uint64_t target_partition_id, uint32_t vp_index, uint8_t target_vtl) "target partition id 0x%lx, VP index %d, target VTL %d"
+hyperv_hcall_vtl_call(uint32_t vp_index, uint8_t active_vtl, uint8_t next_vtl) "VP index %u, active vtl %u, next vtl %u"
+hyperv_hcall_vtl_return(uint32_t vp_index, uint8_t active_vtl, uint8_t prev_vtl, uint64_t ctl) "VP index %u, active vtl %u, next vtl %u, ctl 0x%lx"
+hyperv_hcall_vtl_upcall(uint32_t vp_index, uint8_t vtl, uint32_t vtl_event_state, uint32_t vtl_event_handled) "VP index %u, vtl %d, state 0x%x, handled %u"
+hyperv_hcall_vtl_downcall(uint32_t vp_index, uint8_t vtl) "VP index %u, vtl %d"
+hyperv_hcall_vtl_entry(uint32_t vp_index, uint8_t vtl, uint32_t vtl_event_state) "VP index %u, vtl %d, state 0x%x"
+hyperv_hcall_vtl_poll(uint32_t vp_index, uint8_t active_vtl) "VP index %u, active vtl %u"
+hyperv_hcall_vtl_interrupt(uint32_t vp, uint8_t active_vtl, uint8_t next_vtl) "VP index %u, active vtl %u, next vtl %u"
 hyperv_hcall_get_set_vp_register(uint64_t partition_id, uint32_t vp_index, uint8_t input_vtl, uint16_t vtl, uint16_t count, bool set) "partition id 0x%lx, VP index %d, target VTL %u, active VTL %u, count %d, set %d"
 hyperv_hcall_set_vp_register(uint32_t name, uint64_t val_low, uint64_t val_high) "name 0x%x, val_low 0x%lx, val_high 0x%lx"
 hyperv_hcall_get_vp_register(uint32_t name, uint64_t val_low, uint64_t val_high) "name 0x%x, val_low 0x%lx, val_high 0x%lx"

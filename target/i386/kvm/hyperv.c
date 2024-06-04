@@ -56,6 +56,15 @@ int hyperv_x86_vsm_init(X86CPU *cpu)
     return 0;
 }
 
+static void kvm_hv_inject_ud(CPUState *c)
+{
+    X86CPU *cpu = X86_CPU(c);
+    CPUX86State *env = &cpu->env;
+
+    kvm_cpu_synchronize_state(c);
+    kvm_queue_exception(env, EXCP06_ILLOP, 0, 0, 0, 0);
+}
+
 int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
 {
     CPUX86State *env = &cpu->env;
@@ -95,6 +104,7 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
         bool fast = exit->u.hcall.input & HV_HYPERCALL_FAST;
         uint64_t in_param = exit->u.hcall.ingpa;
         uint64_t out_param = exit->u.hcall.outgpa;
+        int ret;
 
         switch (code) {
         case HV_ENABLE_PARTITION_VTL:
@@ -105,6 +115,18 @@ int kvm_hv_handle_exit(X86CPU *cpu, struct kvm_hyperv_exit *exit)
             exit->u.hcall.result =
                 hyperv_hcall_vtl_enable_vp_vtl(CPU(cpu), in_param, fast);
             break;
+        case HV_VTL_CALL:
+            exit->u.hcall.result = HV_STATUS_SUCCESS;
+            ret = hyperv_hcall_vtl_call(CPU(cpu));
+            if (ret < 0)
+                kvm_hv_inject_ud(CPU(cpu));
+            return ret;
+        case HV_VTL_RETURN:
+            exit->u.hcall.result = HV_STATUS_SUCCESS;
+            ret = hyperv_hcall_vtl_return(CPU(cpu));
+            if (ret < 0)
+                kvm_hv_inject_ud(CPU(cpu));
+            return ret;
         case HVCALL_GET_VP_REGISTERS:
           exit->u.hcall.result =
               hyperv_hcall_get_set_vp_register(CPU(cpu), exit, false);

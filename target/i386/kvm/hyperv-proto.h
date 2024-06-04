@@ -48,6 +48,7 @@
 #define HV_SIGNAL_EVENTS             (1u << 5)
 #define HV_ACCESS_VSM                (1u << 16)
 #define HV_ACCESS_VP_REGS            (1u << 17)
+#define HV_START_VP                  (1u << 21)
 
 /*
  * HV_CPUID_FEATURES.EDX bits
@@ -204,6 +205,8 @@
 
 #define HV_STIMER_COUNT                       4
 
+#define HV_VTL_COUNT                          2
+
 /*
  * Synthetic debugger control definitions
  */
@@ -221,6 +224,71 @@ struct hv_x64_table_register {
 	uint16_t limit;
 	uint64_t base;
 } __attribute__ ((__packed__));
+
+struct kvm_hv_vcpu_per_vtl_state {
+	uint64_t rip;
+	uint64_t rsp;
+	uint64_t rflags;
+	uint64_t efer;
+	uint64_t cr0;
+	uint64_t cr3;
+	uint64_t cr4;
+    uint64_t dr7;
+	uint64_t msr_cr_pat;
+	uint64_t msr_kernel_gsbase;
+    uint64_t msr_gsbase;
+    uint64_t msr_fsbase;
+	uint64_t msr_tsc_aux;
+	uint64_t msr_sysenter_cs;
+	uint64_t msr_sysenter_esp;
+	uint64_t msr_sysenter_eip;
+	uint64_t msr_star;
+	uint64_t msr_lstar;
+	uint64_t msr_cstar;
+	uint64_t msr_sfmask;
+    uint64_t msr_hv_synic_control;
+    uint64_t msr_hv_synic_evt_page;
+    uint64_t msr_hv_synic_msg_page;
+    uint64_t msr_hv_synic_sint[HV_SINT_COUNT];
+    uint64_t msr_hv_stimer_config[HV_STIMER_COUNT];
+    uint64_t msr_hv_stimer_count[HV_STIMER_COUNT];
+    uint64_t msr_hv_guest_os_id;
+    uint64_t msr_hv_hypercall;
+    uint64_t msr_hv_tsc;
+    uint64_t msr_hv_vp_assist;
+
+    uint64_t apic_base;
+
+	struct hv_x64_segment_register cs;
+	struct hv_x64_segment_register ds;
+	struct hv_x64_segment_register es;
+	struct hv_x64_segment_register fs;
+	struct hv_x64_segment_register gs;
+	struct hv_x64_segment_register ss;
+	struct hv_x64_segment_register tr;
+	struct hv_x64_segment_register ldtr;
+
+	struct hv_x64_table_register idtr;
+	struct hv_x64_table_register gdtr;
+
+    int32_t exception_nr;
+    int32_t interrupt_injected;
+    uint8_t soft_interrupt;
+    uint8_t exception_pending;
+    uint8_t exception_injected;
+    uint8_t has_error_code;
+    int error_code;
+    uint8_t exception_has_payload;
+    uint64_t exception_payload;
+    uint8_t triple_fault_pending;
+    uint32_t ins_len;
+    uint32_t sipi_vector;
+    uint8_t nmi_injected;
+    uint8_t nmi_pending;
+
+    uint8_t hflags;
+    uint8_t hflags2;
+};
 
 struct hv_init_vp_context {
 	uint64_t rip;
