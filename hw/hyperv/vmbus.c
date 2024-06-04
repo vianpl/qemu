@@ -1407,7 +1407,7 @@ static HvSintRoute *make_sint_route(VMBus *vmbus, uint32_t vp_index)
         }
     }
 
-    return hyperv_sint_route_new(vp_index, VMBUS_SINT, NULL, NULL);
+    return hyperv_sint_route_new(vp_index, 0, VMBUS_SINT, NULL, NULL);
 }
 
 static void open_channel(VMBusChannel *chan)
@@ -1612,7 +1612,7 @@ static void post_msg(VMBus *vmbus, void *msgdata, uint32_t msglen)
 static int vmbus_init(VMBus *vmbus)
 {
     if (vmbus->target_vp != (uint32_t)-1) {
-        vmbus->sint_route = hyperv_sint_route_new(vmbus->target_vp, VMBUS_SINT,
+        vmbus->sint_route = hyperv_sint_route_new(vmbus->target_vp, 0, VMBUS_SINT,
                                                   vmbus_msg_cb, vmbus);
         if (!vmbus->sint_route) {
             error_report("failed to set up SINT route");
