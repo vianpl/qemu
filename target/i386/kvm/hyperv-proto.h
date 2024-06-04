@@ -283,4 +283,9 @@ union hv_register_vsm_partition_status {
 	} __attribute__ ((__packed__));
 };
 
+#define HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_SHIFT	12
+#define HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_MASK	\
+		(~((1ull << HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_SHIFT) - 1))
+
+
 #endif

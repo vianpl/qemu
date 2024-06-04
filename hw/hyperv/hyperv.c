@@ -62,6 +62,7 @@ struct hv_vsm {
 
     /* If bit N is set, then we have VTLN enabled for any number of VPs */
     uint16_t vtl_enabled_for_vps;
+    union hv_register_vsm_code_page_offsets vsm_code_page_offsets;
 } hv_vsm = { .vtl_enabled_for_vps = 1 << 0, };
 
 static int get_active_vtl(CPUState *cpu)
@@ -616,6 +617,8 @@ struct VpVsmState {
     CPUState *cs;
     uint64_t msr_hv_vapic;
     void *vp_assist;
+    uint64_t msr_hv_hypercall;
+    void *hypercall_page;
 };
 
 #define TYPE_VP_VSM "hyperv-vp-vsm"
@@ -624,6 +627,103 @@ OBJECT_DECLARE_SIMPLE_TYPE(VpVsmState, VP_VSM)
 static VpVsmState *get_vp_vsm(CPUState *cs)
 {
     return VP_VSM(object_resolve_path_component(OBJECT(cs), "vp-vsm"));
+}
+
+static void hyperv_setup_hypercall_page(CPUState *cs, uint64_t data)
+{
+    hwaddr gpa = data & HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_MASK;
+    hwaddr len = 1 << HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_SHIFT;
+    bool enable = !!(data & HV_X64_MSR_HYPERCALL_ENABLE);
+    VpVsmState *vpvsm = get_vp_vsm(cs);
+    uint32_t ebx = 0, ecx = 0, edx = 0;
+    char vendor[CPUID_VENDOR_SZ + 1];
+    uint8_t instructions[0x30];
+    int i = 0;
+
+    trace_hyperv_setup_hypercall_page(hyperv_vp_index(cs), get_active_vtl(cs), enable, gpa);
+
+    if (!vpvsm)
+        return;
+
+    vpvsm->msr_hv_hypercall = data;
+
+    if (vpvsm->hypercall_page) {
+        memset(vpvsm->hypercall_page, 0, len);
+        address_space_unmap(cs->as, vpvsm->hypercall_page, len, true, len);
+    }
+
+    if (!enable)
+        return;
+
+    vpvsm->hypercall_page = address_space_map(cs->as, gpa, &len, true, MEMTXATTRS_UNSPECIFIED);
+    if (!vpvsm->hypercall_page) {
+        printf("Failed to map VP assit page");
+        return;
+    }
+
+    /* Intel VMCALL or AMD VMMCALL*/
+    host_cpuid(0, 0, NULL, &ebx, &ecx, &edx);
+    x86_cpu_vendor_words2str(vendor, ebx, edx, ecx);
+    instructions[i++] = 0x0f;
+    instructions[i++] = 0x01;
+    if (!strcmp(vendor, "GenuineIntel"))
+        instructions[i++] = 0xc1;
+    else
+        instructions[i++] = 0xd9;
+    /* ret */
+    instructions[i++] = 0xc3;
+
+    //TODO fix this, also introduce 32bit support.
+    i = 22;
+    /*
+     * VTL call 64-bit entry prologue:
+     * 	mov %rcx, %rax
+     * 	mov $0x11, %ecx
+     * 	jmp 0:
+     */
+    hv_vsm.vsm_code_page_offsets.vtl_call_offset = i;
+    instructions[i++] = 0x48;
+    instructions[i++] = 0x89;
+    instructions[i++] = 0xc8;
+    instructions[i++] = 0xb9;
+    instructions[i++] = 0x11;
+    instructions[i++] = 0x00;
+    instructions[i++] = 0x00;
+    instructions[i++] = 0x00;
+    instructions[i++] = 0xeb;
+    instructions[i++] = 0xe0;
+    /*
+     * VTL return 64-bit entry prologue:
+     * 	mov %rcx, %rax
+     * 	mov $0x12, %ecx
+     * 	jmp 0:
+     */
+    hv_vsm.vsm_code_page_offsets.vtl_return_offset = i;
+    instructions[i++] = 0x48;
+    instructions[i++] = 0x89;
+    instructions[i++] = 0xc8;
+    instructions[i++] = 0xb9;
+    instructions[i++] = 0x12;
+    instructions[i++] = 0x00;
+    instructions[i++] = 0x00;
+    instructions[i++] = 0x00;
+    instructions[i++] = 0xeb;
+    instructions[i++] = 0xd6;
+
+
+    memcpy(vpvsm->hypercall_page, instructions, i);
+}
+
+static bool hyperv_hypercall_page_wrmsr(X86CPU *cpu, uint32_t msr, uint64_t val)
+{
+    if (msr != HV_X64_MSR_HYPERCALL) {
+        printf("In %s with MSR %x\n", __func__, msr);
+        return false;
+    }
+
+    hyperv_setup_hypercall_page(CPU(cpu), val);
+
+    return true;
 }
 
 static void hyperv_setup_vp_assist(CPUState *cs, uint64_t data)
@@ -675,6 +775,11 @@ int hyperv_init_vsm(CPUState *cs)
     //TODO Add filter for VP INDEX MSR, we don't support vp_index != apic_id.
     if (!kvm_filter_msr(s, HV_X64_MSR_APIC_ASSIST_PAGE, NULL, hyperv_vp_assist_page_wrmsr)) {
         printf("Failed to set HV_X64_MSR_APIC_ASSIST_PAGE MSR handler\n");
+        return -1;
+    }
+
+    if (!kvm_filter_msr(s, HV_X64_MSR_HYPERCALL, NULL, hyperv_hypercall_page_wrmsr)) {
+        printf("Failed to set HV_X64_MSR_HYPERCALL MSR handler\n");
         return -1;
     }
 

@@ -98,6 +98,11 @@
 #define HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_MASK	\
 		(~((1ull << HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT) - 1))
 
+#define HV_X64_MSR_HYPERCALL_ENABLE		0x00000001
+#define HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_SHIFT	12
+#define HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_MASK	\
+		(~((1ull << HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_SHIFT) - 1))
+
 /*
  * Input structure for POST_MESSAGE hypercall
  */
@@ -225,6 +230,15 @@ union hv_input_vtl {
 		uint8_t reserved_z: 3;
 	};
 } __attribute__ ((__packed__));
+
+union hv_register_vsm_code_page_offsets {
+	uint64_t as_u64;
+	struct {
+		uint64_t vtl_call_offset:12;
+		uint64_t vtl_return_offset:12;
+		uint64_t reserved:40;
+	} __attribute__((__packed__));
+};
 
 struct hv_nested_enlightenments_control {
 	struct {
