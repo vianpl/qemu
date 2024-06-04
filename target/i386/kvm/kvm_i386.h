@@ -53,6 +53,7 @@ bool kvm_has_adjust_clock_stable(void);
 bool kvm_has_exception_payload(void);
 void kvm_synchronize_all_tsc(void);
 
+int kvm_put_one_msr(X86CPU *cpu, int index, uint64_t value);
 void kvm_get_apic_state(DeviceState *d, struct kvm_lapic_state *kapic);
 void kvm_put_apicbase(X86CPU *cpu, uint64_t value);
 void kvm_put_hv_vp_assist(X86CPU *cpu, uint64_t value);

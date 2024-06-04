@@ -737,6 +737,35 @@ static bool hyperv_hypercall_page_wrmsr(X86CPU *cpu, uint32_t msr, uint64_t val)
     return true;
 }
 
+static bool hyperv_hv_x86_msr_eoi_wrmsr(X86CPU *cpu, uint32_t msr, uint64_t val)
+{
+    CPUState *cs = CPU(cpu);
+    int ret;
+
+    if (msr != HV_X64_MSR_EOI) {
+        printf("In %s with MSR %x\n", __func__, msr);
+        return false;
+    }
+
+    if (get_active_vtl(cs) != 1) {
+        printf("This fix should only be run on VTL1 vCPUs\n");
+        return false;
+    }
+
+    /*
+     * Cleanup the high bits. They are reserved and VTL1 doesn't always
+     * sanitize them.
+     */
+
+    ret = kvm_put_one_msr(cpu, HV_X64_MSR_EOI, val & 0xffffffff);
+    if (ret < 0) {
+        printf("Failed to set HV_X64_MSR_EOI, ret = %d\n", ret);
+        return false;
+    }
+
+    return true;
+}
+
 static void hyperv_setup_vp_assist(CPUState *cs, uint64_t data)
 {
     hwaddr gpa = data & HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_MASK;
@@ -791,6 +820,12 @@ int hyperv_init_vsm(CPUState *cs)
 
     if (!kvm_filter_msr(s, HV_X64_MSR_HYPERCALL, NULL, hyperv_hypercall_page_wrmsr)) {
         printf("Failed to set HV_X64_MSR_HYPERCALL MSR handler\n");
+        return -1;
+    }
+
+    if (get_active_vtl(cs) == 1 &&
+        !kvm_filter_msr(s, HV_X64_MSR_EOI, NULL, hyperv_hv_x86_msr_eoi_wrmsr)) {
+        printf("Failed to set HV_X64_MSR_EOI MSR handler\n");
         return -1;
     }
 
