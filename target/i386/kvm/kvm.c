@@ -5372,6 +5372,15 @@ int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
                 run->ex.exception, run->ex.error_code);
         ret = -1;
         break;
+    case KVM_EXIT_SYSTEM_EVENT:
+        switch (run->system_event.type) {
+        case KVM_SYSTEM_EVENT_WAKEUP:
+            ret = hyperv_vcpu_event_callback(cs);
+            break;
+        default:
+            ret = -1;
+        }
+        break;
     case KVM_EXIT_DEBUG:
         DPRINTF("kvm_exit_debug\n");
         bql_lock();
