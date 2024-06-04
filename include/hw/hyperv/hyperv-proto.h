@@ -43,11 +43,13 @@
 /*
  * Hypercall numbers
  */
+#define HV_SEND_IPI                           0x000b
 #define HV_MODIFY_VTL_PROTECTION_MASK         0x000c
 #define HV_ENABLE_PARTITION_VTL               0x000d
 #define HV_ENABLE_VP_VTL			          0x000f
 #define HV_VTL_CALL				              0x0011
 #define HV_VTL_RETURN				          0x0012
+#define HV_SEND_IPI_EX                        0x0015
 #define HVCALL_GET_VP_REGISTERS	              0x0050
 #define HVCALL_SET_VP_REGISTERS			      0x0051
 #define HV_POST_MESSAGE                       0x005c
@@ -55,7 +57,10 @@
 #define HV_POST_DEBUG_DATA                    0x0069
 #define HV_RETRIEVE_DEBUG_DATA                0x006a
 #define HV_RESET_DEBUG_SESSION                0x006b
-#define HV_HYPERCALL_FAST                     (1u << 16)
+
+#define HV_HYPERCALL_FAST                     BIT(16)
+#define HV_HYPERCALL_VARHEAD_OFFSET	          17
+#define HV_HYPERCALL_VARHEAD_MASK	          MAKE_64BIT_MASK(HV_HYPERCALL_VARHEAD_OFFSET, 9)
 
 /*
  * Message size
@@ -163,6 +168,14 @@
 #define HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_SHIFT	12
 #define HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_MASK	\
 		(~((1ull << HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_SHIFT) - 1))
+
+#define HV_IPI_LOW_VECTOR	0x10
+#define HV_IPI_HIGH_VECTOR	0xff
+
+enum HV_GENERIC_SET_FORMAT {
+	HV_GENERIC_SET_SPARSE_4K,
+	HV_GENERIC_SET_ALL,
+};
 
 /*
  * Input structure for POST_MESSAGE hypercall
@@ -503,6 +516,31 @@ struct hyperv_memory_intercept {
 	uint64_t r13;
 	uint64_t r14;
 	uint64_t r15;
+} __attribute__((packed));
+
+struct hv_send_ipi {
+	uint32_t vector;
+	union hv_input_vtl in_vtl;
+	uint8_t reserved[3];
+	uint64_t cpu_mask;
+} __attribute__((packed));
+
+struct hv_vpset {
+	uint64_t format;
+	uint64_t valid_bank_mask;
+	uint64_t bank_contents[];
+} __attribute__((packed));
+
+/* The maximum number of sparse vCPU banks which can be encoded by 'struct hv_vpset' */
+#define HV_MAX_SPARSE_VCPU_BANKS (64)
+/* The number of vCPUs in one sparse bank */
+#define HV_VCPUS_PER_SPARSE_BANK (64)
+
+struct hv_send_ipi_ex {
+	uint32_t vector;
+	union hv_input_vtl in_vtl;
+	uint8_t reserved[3];
+	struct hv_vpset vp_set;
 } __attribute__((packed));
 
 #endif
