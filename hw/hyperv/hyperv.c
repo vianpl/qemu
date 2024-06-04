@@ -2657,6 +2657,53 @@ check_and_send_ipi:
 
     return HV_STATUS_SUCCESS;
 }
+
+uint64_t hyperv_hcall_get_vp_index_from_apic_id(CPUState *cs, struct kvm_hyperv_exit *exit)
+{
+    uint16_t rep_cnt = (exit->u.hcall.input >> HV_HYPERCALL_REP_COMP_OFFSET) & 0xfff;
+    uint16_t rep_idx = (exit->u.hcall.input >> HV_HYPERCALL_REP_START_OFFSET) & 0xfff;
+    bool fast = exit->u.hcall.input & HV_HYPERCALL_FAST;
+    struct hv_get_vp_index_from_apic_id_input input;
+    CPUState *target_vcpu;
+    uint64_t apic_id;
+    uint64_t vp_index;
+    uint16_t count;
+
+    count = rep_cnt - rep_idx;
+    count = !!count;
+
+    if (fast) {
+        input.partition_id = exit->u.hcall.ingpa;
+        input.target_vtl = exit->u.hcall.outgpa & 0xFF;
+        apic_id = exit->u.hcall.xmm[0];
+    } else {
+        hyperv_physmem_read(cs, exit->u.hcall.ingpa, &input, sizeof(input));
+        hyperv_physmem_read(cs, exit->u.hcall.ingpa + sizeof(input), &apic_id, sizeof(apic_id));
+    }
+
+    /* Only self-targeting is supported */
+    if (input.partition_id != HV_PARTITION_ID_SELF)
+        return HV_STATUS_INVALID_PARTITION_ID;
+
+    apic_id &= 0xFFFFFFFF;
+    target_vcpu = hyperv_vsm_vcpu(apic_id, input.target_vtl);
+    if (!target_vcpu)
+        return HV_STATUS_INVALID_PARAMETER;
+
+    vp_index = hyperv_vp_index(target_vcpu);
+    trace_hyperv_hvcall_get_vp_index_from_apic_id(input.partition_id,
+                                                  input.target_vtl, apic_id, vp_index);
+
+    printf("apic_id vp id: partition_id %lx, vtl %u, apic_id 0x%lx, VP index %lu\n", input.partition_id, input.target_vtl, apic_id, vp_index);
+
+    if (fast) {
+        exit->u.hcall.xmm[2] = vp_index;
+    } else {
+        hyperv_physmem_write(cs, exit->u.hcall.outgpa, &vp_index, sizeof(vp_index));
+    }
+
+    return ((uint64_t)count << HV_HYPERCALL_REP_COMP_OFFSET) | HV_STATUS_SUCCESS;
+}
 uint16_t hyperv_hcall_post_message(uint64_t param, bool fast)
 {
     uint16_t ret;
