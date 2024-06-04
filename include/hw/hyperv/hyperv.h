@@ -71,6 +71,7 @@ int hyperv_hcall_vtl_return(CPUState *cs);
 void hyperv_vsm_reset(CPUState *cpu);
 uint64_t hyperv_hcall_get_set_vp_register(CPUState *cs, struct kvm_hyperv_exit *exit,
                                           bool set);
+uint64_t hyperv_hcall_translate_virtual_address(CPUState *cs, struct kvm_hyperv_exit *exit);
 uint16_t hyperv_hcall_vtl_enable_vp_vtl(CPUState *cs, uint64_t param, bool fast);
 
 int kvm_hv_handle_fault(CPUState *cs, uint64_t gpa, uint64_t size,
