@@ -129,12 +129,14 @@ static void synic_realize(DeviceState *dev, Error **errp)
     Object *obj = OBJECT(dev);
     SynICState *synic = SYNIC(dev);
     char *msgp_name, *eventp_name;
+    uint32_t namespace;
     uint32_t vp_index;
 
     /* memory region names have to be globally unique */
     vp_index = hyperv_vp_index(synic->cs);
-    msgp_name = g_strdup_printf("synic-%u-msg-page", vp_index);
-    eventp_name = g_strdup_printf("synic-%u-event-page", vp_index);
+    namespace = get_active_vtl(synic->cs);
+    msgp_name = g_strdup_printf("synic-%u-%u-msg-page", vp_index, namespace);
+    eventp_name = g_strdup_printf("synic-%u-%u-event-page", vp_index, namespace);
 
     memory_region_init_ram(&synic->msg_page_mr, obj, msgp_name,
                            sizeof(*synic->msg_page), &error_abort);
