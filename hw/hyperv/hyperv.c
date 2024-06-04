@@ -88,25 +88,24 @@ static void synic_update(SynICState *synic, bool sctl_enable,
                          hwaddr msg_page_addr, hwaddr event_page_addr)
 {
 
+    MemoryRegion *root = hv_vsm.root[get_active_vtl(synic->cs)] ? : get_system_memory();
+
     synic->sctl_enabled = sctl_enable;
     if (synic->msg_page_addr != msg_page_addr) {
         if (synic->msg_page_addr) {
-            memory_region_del_subregion(get_system_memory(),
-                                        &synic->msg_page_mr);
+            memory_region_del_subregion(root, &synic->msg_page_mr);
         }
         if (msg_page_addr) {
-            memory_region_add_subregion(get_system_memory(), msg_page_addr,
-                                        &synic->msg_page_mr);
+            memory_region_add_subregion(root, msg_page_addr, &synic->msg_page_mr);
         }
         synic->msg_page_addr = msg_page_addr;
     }
     if (synic->event_page_addr != event_page_addr) {
         if (synic->event_page_addr) {
-            memory_region_del_subregion(get_system_memory(),
-                                        &synic->event_page_mr);
+            memory_region_del_subregion(root, &synic->event_page_mr);
         }
         if (event_page_addr) {
-            memory_region_add_subregion(get_system_memory(), event_page_addr,
+            memory_region_add_subregion(root, event_page_addr,
                                         &synic->event_page_mr);
         }
         synic->event_page_addr = event_page_addr;
