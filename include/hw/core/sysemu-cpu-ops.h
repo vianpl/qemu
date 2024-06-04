@@ -37,7 +37,8 @@ typedef struct SysemuCPUOps {
      * instead of get_phys_page_debug.
      */
     hwaddr (*get_phys_page_attrs_debug)(CPUState *cpu, vaddr addr,
-                                        MemTxAttrs *attrs);
+                                        MemTxAttrs *attrs,
+                                        MemFaultAttrs *access);
     /**
      * @asidx_from_attrs: Callback to return the CPU AddressSpace to use for
      *       a memory access with the specified memory transaction attributes.

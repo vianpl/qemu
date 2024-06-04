@@ -48,12 +48,12 @@ bool cpu_get_memory_mapping(CPUState *cpu, MemoryMappingList *list,
 }
 
 hwaddr cpu_get_phys_page_attrs_debug(CPUState *cpu, vaddr addr,
-                                     MemTxAttrs *attrs)
+                                     MemTxAttrs *attrs, MemFaultAttrs *access)
 {
     CPUClass *cc = CPU_GET_CLASS(cpu);
 
     if (cc->sysemu_ops->get_phys_page_attrs_debug) {
-        return cc->sysemu_ops->get_phys_page_attrs_debug(cpu, addr, attrs);
+        return cc->sysemu_ops->get_phys_page_attrs_debug(cpu, addr, attrs, access);
     }
     /* Fallback for CPUs which don't implement the _attrs_ hook */
     *attrs = MEMTXATTRS_UNSPECIFIED;
@@ -64,7 +64,7 @@ hwaddr cpu_get_phys_page_debug(CPUState *cpu, vaddr addr)
 {
     MemTxAttrs attrs = {};
 
-    return cpu_get_phys_page_attrs_debug(cpu, addr, &attrs);
+    return cpu_get_phys_page_attrs_debug(cpu, addr, &attrs, NULL);
 }
 
 int cpu_asidx_from_attrs(CPUState *cpu, MemTxAttrs attrs)
