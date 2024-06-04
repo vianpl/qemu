@@ -664,4 +664,8 @@ static inline unsigned long hweight64(uint64_t w)
 	       hweight32((unsigned int)w);
 }
 
+static inline int fls(unsigned int x)
+{
+	return x ? sizeof(x) * 8 - __builtin_clz(x) : 0;
+}
 #endif
