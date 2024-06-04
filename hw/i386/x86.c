@@ -95,9 +95,10 @@ uint32_t x86_cpu_apic_id_from_index(X86MachineState *x86ms,
 }
 
 
-void x86_cpu_new(X86MachineState *x86ms, int namespace, int64_t apic_id, Error **errp)
+void x86_cpu_new(X86MachineState *x86ms, int namespace, struct KVMState *s, int64_t apic_id, Error **errp)
 {
     Object *cpu = object_new(MACHINE(x86ms)->cpu_type);
+    CPUState *cs = CPU(DEVICE(cpu));
 
     if (!object_property_set_uint(cpu, "apic-id", apic_id, errp)) {
         goto out;
@@ -106,6 +107,9 @@ void x86_cpu_new(X86MachineState *x86ms, int namespace, int64_t apic_id, Error *
     if (!object_property_set_uint(cpu, "namespace", namespace, errp)) {
         goto out;
     }
+
+    if (s)
+        cs->kvm_state = s;
 
     qdev_realize(DEVICE(cpu), NULL, errp);
 
@@ -158,7 +162,7 @@ void x86_cpus_init(X86MachineState *x86ms, int default_cpu_version)
 
     possible_cpus = mc->possible_cpu_arch_ids(ms);
     for (i = 0; i < ms->smp.cpus; i++) {
-        x86_cpu_new(x86ms, 0, possible_cpus->cpus[i].arch_id, &error_fatal);
+        x86_cpu_new(x86ms, 0, NULL, possible_cpus->cpus[i].arch_id, &error_fatal);
     }
 }
 

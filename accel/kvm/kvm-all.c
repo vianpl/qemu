@@ -383,7 +383,7 @@ static int kvm_get_vcpu(KVMState *s, unsigned long vcpu_id)
 
 int kvm_init_vcpu(CPUState *cpu, Error **errp)
 {
-    KVMState *s = kvm_state;
+    KVMState *s = cpu->kvm_state ? : kvm_state;
     long mmap_size;
     int ret;
 
