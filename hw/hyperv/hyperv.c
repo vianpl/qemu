@@ -48,6 +48,11 @@ OBJECT_DECLARE_SIMPLE_TYPE(SynICState, SYNIC)
 
 static bool synic_enabled;
 
+static int get_active_vtl(CPUState *cpu)
+{
+    return X86_CPU(cpu)->namespace;
+}
+
 static MemTxResult hyperv_physmem_write(CPUState *cs, hwaddr addr,
                                         const void *buf, hwaddr len)
 {
