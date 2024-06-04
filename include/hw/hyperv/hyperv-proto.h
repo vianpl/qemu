@@ -61,6 +61,7 @@
 #define HV_HYPERCALL_FAST                     BIT(16)
 #define HV_HYPERCALL_VARHEAD_OFFSET	          17
 #define HV_HYPERCALL_VARHEAD_MASK	          MAKE_64BIT_MASK(HV_HYPERCALL_VARHEAD_OFFSET, 9)
+#define HV_GET_VP_INDEX_FROM_APIC_ID	      0x009a
 
 /*
  * Message size
@@ -541,6 +542,12 @@ struct hv_send_ipi_ex {
 	union hv_input_vtl in_vtl;
 	uint8_t reserved[3];
 	struct hv_vpset vp_set;
+} __attribute__((packed));
+
+struct hv_get_vp_index_from_apic_id_input {
+	uint64_t partition_id;
+	uint8_t target_vtl;
+	uint8_t _padding[7];
 } __attribute__((packed));
 
 #endif
