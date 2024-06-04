@@ -2141,6 +2141,155 @@ uint64_t hyperv_hcall_get_set_vp_register(CPUState *cs, struct kvm_hyperv_exit *
     return (uint64_t)HV_STATUS_SUCCESS | ((uint64_t)nregs << HV_HYPERCALL_REP_COMP_OFFSET);
 }
 
+static uint64_t hyperv_translate_va_validate_input(CPUState *cs,
+                                           struct hv_xlate_va_input *in,
+                                           uint8_t *target_vtl, uint8_t *flags)
+{
+    union hv_input_vtl in_vtl;
+
+    if (in->partition_id != HV_PARTITION_ID_SELF)
+        return HV_STATUS_INVALID_PARTITION_ID;
+
+    in_vtl.as_uint8 = in->control_flags >> 56;
+    *flags = in->control_flags & HV_XLATE_GVA_FLAGS_MASK;
+
+    if (in_vtl.use_target_vtl) {
+        *target_vtl = in_vtl.target_vtl;
+        if (*target_vtl > get_active_vtl(cs))
+            return HV_STATUS_INVALID_VP_STATE;
+    } else {
+        *target_vtl = get_active_vtl(cs);
+    }
+
+    return HV_STATUS_SUCCESS;
+}
+
+static bool hyperv_gpa_is_overlay(CPUState *cs, uint64_t gpa)
+{
+    VpVsmState *vpvsm = get_vp_vsm(cs);
+    uint64_t hcall;
+
+    hcall = vpvsm->msr_hv_hypercall & HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_MASK;
+    if (hcall == gpa)
+        return true;
+
+    hcall = vpvsm->msr_hv_vapic & HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_MASK;
+    if (hcall == gpa)
+        return true;
+
+    return false;
+}
+
+static struct kvm_translation2 kvm_gva_to_gpa(CPUState *cs, uint64_t gva, size_t *len, uint64_t control_flags)
+{
+    int aw = (control_flags & HV_XLATE_GVA_VAL_WRITE) ? KVM_TRANSLATE_ACCESS_WRITE : 0;
+    int ae = (control_flags & HV_XLATE_GVA_VAL_EXECUTE) ? KVM_TRANSLATE_ACCESS_EXEC : 0;
+    int au = (!(control_flags & HV_XLATE_GVA_PRIVILEGE_EXEMPT) && (X86_CPU(cs)->env.hflags & HF_CPL_MASK))
+             ? KVM_TRANSLATE_ACCESS_USER : 0;
+
+    int flags = control_flags & HV_XLATE_GVA_SET_PAGE_TABLE_BITS ? KVM_TRANSLATE_FLAGS_SET_ACCESSED |
+                                                                   KVM_TRANSLATE_FLAGS_FORCE_SET_ACCESSED |
+                                                                   (aw ? KVM_TRANSLATE_FLAGS_SET_DIRTY : 0) : 0;
+
+    struct kvm_translation2 tr = {
+        .linear_address = gva,
+            .flags = flags,
+            .access = aw | ae | au
+    };
+
+    if (len) {
+        *len = TARGET_PAGE_SIZE - (gva & ~TARGET_PAGE_MASK);
+    }
+
+    if (kvm_vcpu_ioctl(cs, KVM_TRANSLATE2, &tr)) {
+        warn_report("KVM_TRANSLATE2 failed");
+        tr.valid = false;
+    }
+
+    return tr;
+}
+
+uint64_t hyperv_hcall_translate_virtual_address(CPUState *cs, struct kvm_hyperv_exit *exit)
+{
+    bool fast = exit->u.hcall.input & HV_HYPERCALL_FAST;
+    struct hv_xlate_va_output output = {};
+	struct hv_xlate_va_input input;
+	uint8_t flags, target_vtl;
+    CPUState *target_vcpu;
+    struct kvm_translation2 tr;
+
+    if (fast) {
+        input.partition_id = exit->u.hcall.ingpa;
+        input.vp_index = exit->u.hcall.outgpa & 0xFFFFFFFF;
+        input.control_flags = exit->u.hcall.xmm[0];
+        input.gva = exit->u.hcall.xmm[1];
+    } else {
+        hyperv_physmem_read(cs, exit->u.hcall.ingpa, &input, sizeof(input));
+    }
+
+    uint64_t input_validity = hyperv_translate_va_validate_input(cs, &input, &target_vtl, &flags);
+    if (input_validity != HV_STATUS_SUCCESS) {
+        printf("Input is invalid\n");
+        return input_validity;
+    }
+
+    // All VPs
+    if (input.vp_index == HV_ANY_VP) {
+        return HV_STATUS_INVALID_VP_INDEX;
+    }
+
+    if (input.vp_index == HV_VP_INDEX_SELF) {
+        target_vcpu = hyperv_vsm_vcpu(hyperv_vp_index(cs), target_vtl);
+    } else {
+        target_vcpu = hyperv_vsm_vcpu(input.vp_index, target_vtl);
+    }
+
+    if (!target_vcpu) {
+        printf("Invalid VP index %i\n", input.vp_index);
+        return HV_STATUS_INVALID_VP_INDEX;
+    }
+
+    tr = kvm_gva_to_gpa(target_vcpu, input.gva << HV_PAGE_SHIFT, NULL, input.control_flags);
+
+    output.gpa = tr.physical_address >> HV_PAGE_SHIFT;
+
+    if (tr.valid) {
+        output.result_code = HV_XLATE_GVA_SUCCESS;
+        output.cache_type = HV_CACHE_TYPE_X64_WB;
+        output.overlay_page = hyperv_gpa_is_overlay(target_vcpu, tr.physical_address);
+    } else {
+        if (tr.error_code == KVM_TRANSLATE_FAULT_NOT_PRESENT || tr.error_code == KVM_TRANSLATE_FAULT_INVALID_GVA) {
+            output.result_code = HV_XLATE_GVA_UNMAPPED;
+        } else if (tr.error_code == KVM_TRANSLATE_FAULT_PRIVILEGE_VIOLATION) {
+            output.result_code = HV_XLATE_GVA_PRIVILEGE_VIOLATION;
+        } else if (tr.error_code == KVM_TRANSLATE_FAULT_RESERVED_BITS) {
+            output.result_code = HV_XLATE_GVA_INVALID_PAGE_TABLE_FLAGS;
+        } else if (tr.error_code == KVM_TRANSLATE_FAULT_INVALID_GPA) {
+            output.result_code = HV_XLATE_GPA_UNMAPPED;
+        } else if (!tr.set_bits_succeeded && input.control_flags & HV_XLATE_GVA_SET_PAGE_TABLE_BITS) {
+            output.result_code = HV_XLATE_GPA_NO_WRITE;
+        } else {
+            warn_report("unknown translate error code %u", tr.error_code);
+            output.result_code = HV_XLATE_GVA_PRIVILEGE_VIOLATION;
+        }
+    }
+
+	trace_hyperv_hcall_translate_virtual_address(input.partition_id, input.vp_index,
+                                                 target_vtl, input.control_flags,
+                                                 input.gva, output.gpa,
+                                                 output.overlay_page,
+                                                 output.result_code);
+
+	if (fast) {
+		memcpy(&exit->u.hcall.xmm[2], &output, sizeof(output));
+	} else {
+		hyperv_physmem_write(cs, exit->u.hcall.outgpa, &output, sizeof(output));
+	}
+
+	return HV_STATUS_SUCCESS;
+
+}
+
 static uint8_t hyperv_gen_intercept_access_mask(uint64_t flags)
 {
     if (flags & KVM_MEMORY_EXIT_FLAG_READ)

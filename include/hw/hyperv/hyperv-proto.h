@@ -13,6 +13,8 @@
 #include "qemu/bitmap.h"
 
 #define HV_PARTITION_ID_SELF		((uint64_t)-1)
+
+#define HV_ANY_VP                   ((uint32_t)-1)
 #define HV_VP_INDEX_SELF		    ((uint32_t)-2)
 
 //TODO: 16?
@@ -53,6 +55,7 @@
 #define HV_SEND_IPI_EX                        0x0015
 #define HVCALL_GET_VP_REGISTERS	              0x0050
 #define HVCALL_SET_VP_REGISTERS			      0x0051
+#define HV_TRANSLATE_VIRTUAL_ADDRESS	      0x0052
 #define HV_POST_MESSAGE                       0x005c
 #define HV_SIGNAL_EVENT                       0x005d
 #define HV_POST_DEBUG_DATA                    0x0069
@@ -444,6 +447,41 @@ union hv_modify_vtl_protection_mask {
         union hv_input_vtl input_vtl;
         uint8_t reserved[3];
     } __attribute__ ((__packed__));
+};
+
+#define HV_XLATE_GVA_SUCCESS 0
+#define HV_XLATE_GVA_UNMAPPED 1
+#define HV_XLATE_GVA_PRIVILEGE_VIOLATION 2
+#define HV_XLATE_GVA_INVALID_PAGE_TABLE_FLAGS 3
+#define HV_XLATE_GPA_UNMAPPED 4
+#define HV_XLATE_GPA_NO_READ 5
+#define HV_XLATE_GPA_NO_WRITE 6
+#define HV_XLATE_GPA_ILLEGAL_OVERLAY_ACESS 7
+
+#define HV_CACHE_TYPE_X64_WB 6
+
+#define HV_XLATE_GVA_VAL_READ               (1 << 0)
+#define HV_XLATE_GVA_VAL_WRITE              (1 << 1)
+#define HV_XLATE_GVA_VAL_EXECUTE            (1 << 2)
+#define HV_XLATE_GVA_PRIVILEGE_EXEMPT       (1 << 3)
+#define HV_XLATE_GVA_SET_PAGE_TABLE_BITS    (1 << 4)
+#define HV_XLATE_GVA_TLB_FLUSH_INHIBIT      (1 << 5)
+#define HV_XLATE_GVA_FLAGS_MASK             0x3F
+
+struct hv_xlate_va_input {
+	uint64_t partition_id;
+	uint32_t vp_index;
+	uint32_t reserved;
+	uint64_t control_flags;
+	uint64_t gva;
+};
+
+struct hv_xlate_va_output {
+	uint32_t result_code;
+	uint32_t cache_type:8;
+	uint32_t overlay_page:1;
+	uint32_t reserved:23;
+	uint64_t gpa;
 };
 
 /* struct hyperv_intercept_header::access_type_mask */
