@@ -630,5 +630,38 @@ static inline uint64_t half_unshuffle64(uint64_t x)
     x = ((x >> 16) | x) & 0x00000000FFFFFFFFULL;
     return x;
 }
+/*
+ * hweightN: returns the hamming weight (i.e. the number
+ * of bits set) of a N-bit word, taken from u-boot
+ */
+static inline unsigned int hweight32(unsigned int w)
+{
+	unsigned int res = (w & 0x55555555) + ((w >> 1) & 0x55555555);
+	res = (res & 0x33333333) + ((res >> 2) & 0x33333333);
+	res = (res & 0x0F0F0F0F) + ((res >> 4) & 0x0F0F0F0F);
+	res = (res & 0x00FF00FF) + ((res >> 8) & 0x00FF00FF);
+	return (res & 0x0000FFFF) + ((res >> 16) & 0x0000FFFF);
+}
+
+static inline unsigned int hweight16(unsigned int w)
+{
+	unsigned int res = (w & 0x5555) + ((w >> 1) & 0x5555);
+	res = (res & 0x3333) + ((res >> 2) & 0x3333);
+	res = (res & 0x0F0F) + ((res >> 4) & 0x0F0F);
+	return (res & 0x00FF) + ((res >> 8) & 0x00FF);
+}
+
+static inline unsigned int hweight8(unsigned int w)
+{
+	unsigned int res = (w & 0x55) + ((w >> 1) & 0x55);
+	res = (res & 0x33) + ((res >> 2) & 0x33);
+	return (res & 0x0F) + ((res >> 4) & 0x0F);
+}
+
+static inline unsigned long hweight64(uint64_t w)
+{
+	return hweight32((unsigned int)(w >> 32)) +
+	       hweight32((unsigned int)w);
+}
 
 #endif
