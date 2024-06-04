@@ -78,6 +78,7 @@ int kvm_hv_handle_fault(CPUState *cs, uint64_t gpa, uint64_t size,
 
 uint64_t hyperv_hcall_send_ipi(CPUState *cs, int code, struct kvm_hyperv_exit *exit);
 uint64_t hyperv_hcall_get_vp_index_from_apic_id(CPUState *cs, struct kvm_hyperv_exit *exit);
+uint64_t kvm_hv_start_virtual_processor(CPUState *cs, struct kvm_hyperv_exit *exit);
 
 /*
  * Process HV_POST_MESSAGE hypercall: parse the data in the guest memory as
