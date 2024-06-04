@@ -3424,8 +3424,10 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
             if (has_msr_hv_hypercall) {
                 kvm_msr_entry_add(cpu, HV_X64_MSR_GUEST_OS_ID,
                                   env->msr_hv_guest_os_id);
-                kvm_msr_entry_add(cpu, HV_X64_MSR_HYPERCALL,
-                                  env->msr_hv_hypercall);
+                //TODO update
+                if (!hyperv_feat_enabled(cpu, HYPERV_FEAT_VSM))
+                    kvm_msr_entry_add(cpu, HV_X64_MSR_HYPERCALL,
+                                      env->msr_hv_hypercall);
             }
             if (hyperv_feat_enabled(cpu, HYPERV_FEAT_TIME)) {
                 kvm_msr_entry_add(cpu, HV_X64_MSR_REFERENCE_TSC,
