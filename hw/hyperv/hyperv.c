@@ -1623,6 +1623,14 @@ static void do_vtl0_downcall(CPUState *vtl0, run_on_cpu_data arg)
     async_run_on_cpu(vtl1, do_vtl1_poll, RUN_ON_CPU_NULL);
 }
 
+static void kvm_ioctl_set_tlb_inhibit(CPUState *vcpu, __u8 new) {
+    struct kvm_hyperv_tlb_flush_inhibit set = {
+        .inhibit = new,
+    };
+
+    kvm_vcpu_ioctl(vcpu, KVM_HYPERV_SET_TLB_FLUSH_INHIBIT, &set);
+}
+
 int hyperv_hcall_vtl_call(CPUState *vtl0)
 {
     VpVsmState *vpvsm;
@@ -1655,6 +1663,7 @@ int hyperv_hcall_vtl_return(CPUState *vtl1)
     trace_hyperv_hcall_vtl_return(hyperv_vp_index(vtl1), get_active_vtl(vtl1),
                                   get_active_vtl(vtl0), 0);
     vtl1->stop = true;
+    kvm_ioctl_set_tlb_inhibit(vtl0, false);
     cpu_synchronize_state(vtl1);
     async_run_on_cpu(vtl0, do_vtl0_downcall, RUN_ON_CPU_NULL);
 
@@ -2239,9 +2248,9 @@ uint64_t hyperv_hcall_translate_virtual_address(CPUState *cs, struct kvm_hyperv_
     bool fast = exit->u.hcall.input & HV_HYPERCALL_FAST;
     struct hv_xlate_va_output output = {};
 	struct hv_xlate_va_input input;
+    struct kvm_translation2 tr;
 	uint8_t flags, target_vtl;
     CPUState *target_vcpu;
-    struct kvm_translation2 tr;
 
     if (fast) {
         input.partition_id = exit->u.hcall.ingpa;
@@ -2282,6 +2291,11 @@ uint64_t hyperv_hcall_translate_virtual_address(CPUState *cs, struct kvm_hyperv_
         output.result_code = HV_XLATE_GVA_SUCCESS;
         output.cache_type = HV_CACHE_TYPE_X64_WB;
         output.overlay_page = hyperv_gpa_is_overlay(target_vcpu, tr.physical_address);
+
+        if (input.control_flags & HV_XLATE_GVA_TLB_FLUSH_INHIBIT) {
+            CPUState *vtl0 = hyperv_get_prev_vtl(cs);
+            kvm_ioctl_set_tlb_inhibit(vtl0, true);
+        }
     } else {
         if (tr.error_code == KVM_TRANSLATE_FAULT_NOT_PRESENT || tr.error_code == KVM_TRANSLATE_FAULT_INVALID_GVA) {
             output.result_code = HV_XLATE_GVA_UNMAPPED;

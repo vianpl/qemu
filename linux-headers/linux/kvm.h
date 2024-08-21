@@ -2268,4 +2268,18 @@ struct kvm_create_guest_memfd {
 	__u64 reserved[6];
 };
 
+/* Available with KVM_CAP_HYPERV_TLBFLUSH */
+#define KVM_HYPERV_SET_TLB_FLUSH_INHIBIT \
+	_IOW(KVMIO,  0xd6, struct kvm_hyperv_tlb_flush_inhibit)
+
+/* for KVM_HYPERV_SET_TLB_FLUSH_INHIBIT */
+struct kvm_hyperv_tlb_flush_inhibit {
+	/* in */
+	__u16 flags;
+#define KVM_HYPERV_UNINHIBIT_TLB_FLUSH 0
+#define KVM_HYPERV_INHIBIT_TLB_FLUSH 1
+	__u8  inhibit;
+	__u8  reserved[5];
+};
+
 #endif /* __LINUX_KVM_H */
