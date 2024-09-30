@@ -1677,6 +1677,11 @@ typedef struct CPUArchState {
 
     uint64_t vm_hsave;
 
+    union hv_register_cr_intercept_control cr_intercept_control;
+	uint64_t cr0_intercept_mask;
+	uint64_t cr4_intercept_mask;
+	uint64_t ia32_misc_enable_intercept_mask;
+
 #ifdef TARGET_X86_64
     target_ulong lstar;
     target_ulong cstar;
