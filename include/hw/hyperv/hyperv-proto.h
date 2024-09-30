@@ -547,7 +547,8 @@ struct hyperv_intercept_header {
 			uint16_t efer_lma:1;
 			uint16_t debug_active:1;
 			uint16_t interruption_pending:1;
-			uint16_t reserved:9;
+			uint16_t vtl:4;
+			uint16_t reserved:5;
 		};
 	} exec_state;
 	struct hv_x64_segment_register cs;
