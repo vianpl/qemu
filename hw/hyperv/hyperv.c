@@ -725,31 +725,31 @@ static void hyperv_setup_hypercall_page(CPUState *cs, uint64_t data)
     memcpy(vpvsm->hypercall_page, instructions, i);
 }
 
-static bool hyperv_hypercall_page_wrmsr(X86CPU *cpu, uint32_t msr, uint64_t val)
+static int hyperv_hypercall_page_wrmsr(X86CPU *cpu, uint32_t msr, uint64_t val)
 {
     if (msr != HV_X64_MSR_HYPERCALL) {
         printf("In %s with MSR %x\n", __func__, msr);
-        return false;
+		return 0;
     }
 
     hyperv_setup_hypercall_page(CPU(cpu), val);
 
-    return true;
+	return 1;
 }
 
-static bool hyperv_hv_x86_msr_eoi_wrmsr(X86CPU *cpu, uint32_t msr, uint64_t val)
+static int hyperv_hv_x86_msr_eoi_wrmsr(X86CPU *cpu, uint32_t msr, uint64_t val)
 {
     CPUState *cs = CPU(cpu);
     int ret;
 
     if (msr != HV_X64_MSR_EOI) {
         printf("In %s with MSR %x\n", __func__, msr);
-        return false;
+		return 0;
     }
 
     if (get_active_vtl(cs) != 1) {
         printf("This fix should only be run on VTL1 vCPUs\n");
-        return false;
+		return 0;
     }
 
     /*
@@ -760,10 +760,10 @@ static bool hyperv_hv_x86_msr_eoi_wrmsr(X86CPU *cpu, uint32_t msr, uint64_t val)
     ret = kvm_put_one_msr(cpu, HV_X64_MSR_EOI, val & 0xffffffff);
     if (ret < 0) {
         printf("Failed to set HV_X64_MSR_EOI, ret = %d\n", ret);
-        return false;
+		return 0;
     }
 
-    return true;
+	return 1;
 }
 
 static void hyperv_setup_vp_assist(CPUState *cs, uint64_t data)
@@ -795,7 +795,7 @@ static void hyperv_setup_vp_assist(CPUState *cs, uint64_t data)
     memset(vpvsm->vp_assist, 0, sizeof(struct hv_vp_assist_page));
 }
 
-static bool hyperv_vp_assist_page_wrmsr(X86CPU *cpu, uint32_t msr, uint64_t val)
+static int hyperv_vp_assist_page_wrmsr(X86CPU *cpu, uint32_t msr, uint64_t val)
 {
     if (msr != HV_X64_MSR_APIC_ASSIST_PAGE) {
         printf("In %s with MSR %x\n", __func__, msr);
