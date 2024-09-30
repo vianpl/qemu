@@ -123,6 +123,7 @@
 #define HV_X64_REGISTER_CR3                                 0x00040002
 #define HV_X64_REGISTER_CR4                                 0x00040003
 #define HV_X64_REGISTER_CR8                                 0x00040004
+#define HV_X64_REGISTER_XFEM                                0x00040005
 #define HV_X64_REGISTER_DR7                                 0x00050005
 #define HV_X64_REGISTER_LDTR                                0x00060006
 #define HV_X64_REGISTER_TR                                  0x00060007
