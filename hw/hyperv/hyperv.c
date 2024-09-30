@@ -1915,6 +1915,18 @@ static uint64_t get_vp_register(uint32_t name, struct hv_vp_register_val *val,
     case HV_REGISTER_VSM_CODE_PAGE_OFFSETS:
         val->low = hv_vsm.vsm_code_page_offsets.as_u64;
         break;
+	case HV_X64_REGISTER_CR_INTERCEPT_CONTROL:
+		val->low = env->cr_intercept_control.as_u64;
+		break;
+	case HV_X64_REGISTER_CR_INTERCEPT_CR0_MASK:
+		val->low = env->cr0_intercept_mask;
+		break;
+	case HV_X64_REGISTER_CR_INTERCEPT_CR4_MASK:
+		val->low = env->cr4_intercept_mask;
+		break;
+	case HV_X64_REGISTER_CR_INTERCEPT_IA32_MISC_ENABLE_MASK:
+		val->low = env->ia32_misc_enable_intercept_mask;
+		break;
     default:
         printf("%s: unknown VP register 0x%x\n", __func__, name);
         return HV_STATUS_INVALID_PARAMETER;
@@ -2050,11 +2062,19 @@ static uint64_t set_vp_register(uint32_t name, struct hv_vp_register_val *val,
         env->msr_hv_vapic = val->low;
         hyperv_setup_vp_assist(target_vcpu, val->low);
         break;
-    case HV_REGISTER_VSM_VINA:
-    case HV_X64_REGISTER_CR_INTERCEPT_CONTROL:
+	case HV_X64_REGISTER_CR_INTERCEPT_CONTROL:
+		env->cr_intercept_control.as_u64 = val->low;
+		break;
     case HV_X64_REGISTER_CR_INTERCEPT_CR0_MASK:
+		env->cr0_intercept_mask = val->low;
+		break;
     case HV_X64_REGISTER_CR_INTERCEPT_CR4_MASK:
+		env->cr4_intercept_mask = val->low;
+		break;
     case HV_X64_REGISTER_CR_INTERCEPT_IA32_MISC_ENABLE_MASK:
+		env->ia32_misc_enable_intercept_mask = val->low;
+		break;
+	case HV_REGISTER_VSM_VINA:
         printf("%s: faking register 0x%x\n", __func__, name);
         return HV_STATUS_SUCCESS;
     default:
