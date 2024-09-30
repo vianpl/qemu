@@ -1389,38 +1389,6 @@ static int hyperv_vcpu_should_intercept_msr_write(X86CPU *cpu, uint32_t msr)
 	}
 }
 
-static const char *kvm_msr_to_str(uint32_t msr)
-{
-	switch (msr) {
-	case MSR_IA32_MISC_ENABLE:
-		return "'IA32 misc enable'";
-	case MSR_LSTAR:
-		return "'LSTAR'";
-	case MSR_STAR:
-		return "'STAR'";
-	case MSR_CSTAR:
-		return "'CSTAR'";
-	case MSR_IA32_APICBASE_BASE:
-		return "'APIC base'";
-	case MSR_EFER:
-		return "'EFER'";
-	case MSR_IA32_SYSENTER_CS:
-		return "'IA32 sysenter cs'";
-	case MSR_IA32_SYSENTER_EIP:
-		return "'IA32 sysenter eip'";
-	case MSR_IA32_SYSENTER_ESP:
-		return "'IA32 sysenter esp'";
-	case MSR_FMASK:
-		return "'FMASK'";
-	case MSR_TSC_AUX:
-		return "'TSC aux'";
-	case MSR_IA32_FEATURE_CONTROL:
-		return "'IA32 feature control'";
-	default:
-		return "??";
-	}
-}
-
 static int hyperv_intercept_msr_read(X86CPU *cpu, uint32_t msr, uint64_t *val)
 {
 	struct hyperv_message msg = {0};
