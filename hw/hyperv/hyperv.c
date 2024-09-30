@@ -1262,6 +1262,39 @@ static void vsm_memory_listener_register(const char *name, int vtl)
     memory_listener_register(&kml->listener, &hv_vsm.as[vtl]);
 }
 
+static void intercept_cb(void *data, int status)
+{
+	VpVsmState *vsm = data;
+
+	if (!status) {
+		return;
+	}
+
+	assert(status == -EAGAIN);
+
+	while (hyperv_post_msg(vsm->intercept_route, &vsm->intercept_route->staged_msg->msg))
+	sched_yield();
+}
+
+static int hyperv_deliver_intercept(CPUState *cs, struct hyperv_message *msg)
+{
+	VpVsmState *vsm = get_vp_vsm(cs);
+
+	if (!vsm->intercept_route)
+		vsm->intercept_route = hyperv_sint_route_new(hyperv_vp_index(cs),
+													 get_active_vtl(cs), 0,
+													 intercept_cb, cs);
+	if (!vsm->intercept_route) {
+		error_report("Failed to init intercept sint route\n");
+		return -1;
+	}
+
+	while (hyperv_post_msg(vsm->intercept_route, msg))
+		sched_yield();
+
+	return 0;
+}
+
 static int hyperv_kvm_init_vsm(int vtl)
 {
     MachineState *ms = MACHINE(qdev_get_machine());
@@ -2551,39 +2584,6 @@ uint64_t hyperv_hcall_vtl_protection_mask(CPUState *cs, struct kvm_hyperv_exit *
     return (uint64_t)count << HV_HYPERCALL_REP_COMP_OFFSET;
 }
 
-static void intercept_cb(void *data, int status)
-{
-    VpVsmState *vsm = data;
-
-    if (!status) {
-        return;
-    }
-
-    assert(status == -EAGAIN);
-
-    while (hyperv_post_msg(vsm->intercept_route, &vsm->intercept_route->staged_msg->msg))
-        sched_yield();
-}
-
-static int hyperv_deliver_memory_intercept(CPUState *cs, struct hyperv_message *msg)
-{
-    VpVsmState *vsm = get_vp_vsm(cs);
-
-    if (!vsm->intercept_route)
-        vsm->intercept_route = hyperv_sint_route_new(hyperv_vp_index(cs),
-                                                     get_active_vtl(cs), 0,
-                                                     intercept_cb, cs);
-    if (!vsm->intercept_route) {
-        error_report("Failed to init intercept sint route\n");
-        return -1;
-    }
-
-    while (hyperv_post_msg(vsm->intercept_route, msg))
-        sched_yield();
-
-    return 0;
-}
-
 int kvm_hv_handle_fault(CPUState *cs, uint64_t gpa, uint64_t size,
                         uint64_t flags, uint8_t exit_instruction_len)
 {
@@ -2611,7 +2611,7 @@ int kvm_hv_handle_fault(CPUState *cs, uint64_t gpa, uint64_t size,
     cs->stop = true;
     cpu_synchronize_state(cs);
     hyperv_build_memory_intercept(cs, &msg, gpa, flags, exit_instruction_len);
-    hyperv_deliver_memory_intercept(hyperv_get_next_vtl(cs), &msg);
+	hyperv_deliver_intercept(hyperv_get_next_vtl(cs), &msg);
 
     return EXCP_HALTED;
 }
