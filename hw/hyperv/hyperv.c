@@ -1296,6 +1296,58 @@ static int hyperv_deliver_intercept(CPUState *cs, struct hyperv_message *msg)
 	return 0;
 }
 
+static uint32_t kvm_register_to_hv_register(uint64_t reg) {
+	switch (reg) {
+	case KVM_X86_REG_CR(0):
+		return HV_X64_REGISTER_CR0;
+	case KVM_X86_REG_CR(4):
+		return HV_X64_REGISTER_CR4;
+	case KVM_X86_REG_XCR(0):
+		return HV_X64_REGISTER_XFEM;
+	case KVM_X86_REG_LDT:
+		return HV_X64_REGISTER_LDTR;
+	case KVM_X86_REG_TR:
+		return HV_X64_REGISTER_TR;
+	case KVM_X86_REG_GDT:
+		return HV_X64_REGISTER_GDTR;
+	case KVM_X86_REG_IDT:
+		return HV_X64_REGISTER_IDTR;
+	default:
+		return -1;
+	}
+}
+
+static void hyperv_build_reg_intercept(CPUState *intercepted_cpu, struct hyperv_message *msg, uint8_t access_type,
+									   uint32_t reg, uint64_t value)
+{
+	struct hv_reg_intercept *intercept = (struct hv_reg_intercept *) msg->payload;
+	X86CPU *cpu = X86_CPU(intercepted_cpu);
+	struct hv_x64_segment_register rhs;
+	CPUX86State *env = &cpu->env;
+
+	msg->header.message_type = HV_MESSAGE_X64_MSR_INTERCEPT;
+	msg->header.payload_size = sizeof(*intercept);
+
+	intercept->header.vp_index = hyperv_vp_index(intercepted_cpu);
+	intercept->header.instruction_length = intercepted_cpu->kvm_run->memory.exit_instruction_len;
+	intercept->header.access_type_mask = access_type;
+	hyperv_get_seg(&env->segs[R_CS], &rhs);
+	memcpy(&intercept->header.cs, &rhs, sizeof(intercept->header.cs));
+	intercept->header.exec_state.cr0_pe = (env->cr[0] & CR0_PE_MASK);
+	intercept->header.exec_state.cr0_am = (env->cr[0] & CR0_AM_MASK);
+	hyperv_get_seg(&env->segs[R_SS], &rhs);
+	intercept->header.exec_state.cpl = rhs.descriptor_privilege_level;
+	intercept->header.exec_state.efer_lma = !!(env->efer & MSR_EFER_LMA);
+	intercept->header.exec_state.debug_active = 0;
+	intercept->header.exec_state.interruption_pending = 0;
+	intercept->header.rip = env->eip;
+	intercept->header.rflags = env->eflags;
+
+	intercept->is_memory_op = false;
+	intercept->reg_name = kvm_register_to_hv_register(reg);
+	intercept->value = value;
+}
+
 static void hyperv_build_msr_intercept(CPUState *intercepted_cpu, struct hyperv_message *msg, uint8_t access_type,
 									   uint32_t msr)
 {
@@ -1325,6 +1377,28 @@ static void hyperv_build_msr_intercept(CPUState *intercepted_cpu, struct hyperv_
 	intercept->msr_number = msr;
 	intercept->rdx = env->regs[R_EDX];
 	intercept->rax = env->regs[R_EAX];
+}
+
+static int hyperv_vcpu_should_intercept_reg_write(X86CPU *cpu, uint64_t reg)
+{
+	switch (reg) {
+	case KVM_X86_REG_CR(0):
+		return cpu->env.cr_intercept_control.cr0_write;
+	case KVM_X86_REG_CR(4):
+		return cpu->env.cr_intercept_control.cr4_write;
+	case KVM_X86_REG_XCR(0):
+		return cpu->env.cr_intercept_control.xcr0_write;
+	case KVM_X86_REG_LDT:
+		return cpu->env.cr_intercept_control.ldtr_write;
+	case KVM_X86_REG_TR:
+		return cpu->env.cr_intercept_control.tr_write;
+	case KVM_X86_REG_GDT:
+		return cpu->env.cr_intercept_control.gdtr_write;
+	case KVM_X86_REG_IDT:
+		return cpu->env.cr_intercept_control.idtr_write;
+	default:
+		return 0;
+	}
 }
 
 static int hyperv_vcpu_should_intercept_msr_read(X86CPU *cpu, uint32_t msr)
@@ -1377,6 +1451,47 @@ static int hyperv_vcpu_should_intercept_msr_write(X86CPU *cpu, uint32_t msr)
 	default:
 		return 0;
 	}
+}
+
+static int hyperv_intercept_register_write(CPUState *cs, uint64_t reg, uint64_t val)
+{
+	struct hyperv_message msg = {0};
+	struct kvm_sregs sregs;
+	X86CPU *cpu = X86_CPU(cs);
+
+
+	if (reg == KVM_X86_REG_LDT || reg == KVM_X86_REG_TR)
+		val &= 0xffff;
+
+	if (get_active_vtl(cs) == HV_NUM_VTLS-1) {
+		goto emulate;
+	}
+
+	if (!hyperv_vcpu_should_intercept_reg_write(X86_CPU(hyperv_get_next_vtl(cs)), reg)) {
+		goto emulate;
+	}
+
+	if (reg == KVM_X86_REG_CR(0)) {
+		kvm_vcpu_ioctl(cs, KVM_GET_SREGS, &sregs);
+		if (!((sregs.cr0 ^ val) & cpu->env.cr0_intercept_mask))
+			goto emulate;
+	} else if (reg == KVM_X86_REG_CR(4)) {
+		kvm_vcpu_ioctl(cs, KVM_GET_SREGS, &sregs);
+		if (!((sregs.cr4 ^ val) & cpu->env.cr4_intercept_mask))
+			goto emulate;
+	}
+
+	cs->stop = true;
+	cpu_synchronize_state(cs);
+	hyperv_build_reg_intercept(cs, &msg, HV_INTERCEPT_ACCESS_WRITE, reg, val);
+	hyperv_deliver_intercept(hyperv_get_next_vtl(cs), &msg);
+
+	cs->kvm_run->reg.error = 1;
+	return EXCP_HALTED;
+emulate:
+	cs->kvm_run->reg.error = 0;
+
+	return 1;
 }
 
 static int hyperv_intercept_msr_read(X86CPU *cpu, uint32_t msr, uint64_t *val)
@@ -1452,6 +1567,14 @@ static int hyperv_intercept_sgx_launch_control(X86CPU *cpu, uint32_t msr, uint64
 
 static void hyperv_kvm_setup_filters(KVMState *kvm)
 {
+	kvm_filter_register(kvm, KVM_X86_REG_CR(0), hyperv_intercept_register_write);
+	kvm_filter_register(kvm, KVM_X86_REG_CR(4), hyperv_intercept_register_write);
+	kvm_filter_register(kvm, KVM_X86_REG_XCR(0), hyperv_intercept_register_write);
+	kvm_filter_register(kvm, KVM_X86_REG_LDT, hyperv_intercept_register_write);
+	kvm_filter_register(kvm, KVM_X86_REG_TR, hyperv_intercept_register_write);
+	kvm_filter_register(kvm, KVM_X86_REG_GDT, hyperv_intercept_register_write);
+	kvm_filter_register(kvm, KVM_X86_REG_IDT, hyperv_intercept_register_write);
+
 	kvm_filter_msr(kvm,
 				   MSR_IA32_MISC_ENABLE,
 				   hyperv_intercept_msr_read,
