@@ -15,6 +15,9 @@
 #include "qemu/queue.h"
 #include "sysemu/kvm.h"
 
+#include "kvm/kvm_i386.h"
+#include <linux/kvm.h>
+
 typedef struct KVMSlot
 {
     hwaddr start_addr;
@@ -122,6 +125,8 @@ struct KVMState
     uint16_t xen_gnttab_max_frames;
     uint16_t xen_evtchn_max_pirq;
     char *device;
+
+    KVMMSRHandlers msr_handlers[KVM_MSR_FILTER_MAX_RANGES];
 };
 
 void kvm_memory_listener_register(KVMState *s, KVMMemoryListener *kml,

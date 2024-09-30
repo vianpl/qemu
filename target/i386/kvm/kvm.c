@@ -155,8 +155,6 @@ static struct kvm_cpuid2 *cpuid_cache;
 static struct kvm_cpuid2 *hv_cpuid_cache;
 static struct kvm_msr_list *kvm_feature_msrs;
 
-static KVMMSRHandlers msr_handlers[KVM_MSR_FILTER_MAX_RANGES];
-
 #define BUS_LOCK_SLICE_TIME 1000000000ULL /* ns */
 static RateLimit bus_lock_ratelimit_ctrl;
 static int kvm_get_one_msr(X86CPU *cpu, int index, uint64_t *value);
@@ -5198,7 +5196,7 @@ static bool kvm_install_msr_filters(KVMState *s)
     int r, i, j = 0;
 
     for (i = 0; i < KVM_MSR_FILTER_MAX_RANGES; i++) {
-        KVMMSRHandlers *handler = &msr_handlers[i];
+        KVMMSRHandlers *handler = &s->msr_handlers[i];
         if (handler->msr) {
             struct kvm_msr_filter_range *range = &filter.ranges[j++];
 
@@ -5232,16 +5230,16 @@ bool kvm_filter_msr(KVMState *s, uint32_t msr, QEMURDMSRHandler *rdmsr,
 {
     int i;
 
-    for (i = 0; i < ARRAY_SIZE(msr_handlers); i++) {
-        if (!msr_handlers[i].msr) {
-            msr_handlers[i] = (KVMMSRHandlers) {
+    for (i = 0; i < ARRAY_SIZE(s->msr_handlers); i++) {
+        if (!s->msr_handlers[i].msr) {
+            s->msr_handlers[i] = (KVMMSRHandlers) {
                 .msr = msr,
                 .rdmsr = rdmsr,
                 .wrmsr = wrmsr,
             };
 
             if (!kvm_install_msr_filters(s)) {
-                msr_handlers[i] = (KVMMSRHandlers) { };
+                s->msr_handlers[i] = (KVMMSRHandlers) { };
                 return false;
             }
 
@@ -5255,10 +5253,10 @@ bool kvm_filter_msr(KVMState *s, uint32_t msr, QEMURDMSRHandler *rdmsr,
 static int kvm_handle_rdmsr(X86CPU *cpu, struct kvm_run *run)
 {
     int i;
-    bool r;
+    int r;
 
-    for (i = 0; i < ARRAY_SIZE(msr_handlers); i++) {
-        KVMMSRHandlers *handler = &msr_handlers[i];
+    for (i = 0; i < ARRAY_SIZE(cpu->parent_obj.kvm_state->msr_handlers); i++) {
+        KVMMSRHandlers *handler = &cpu->parent_obj.kvm_state->msr_handlers[i];
         if (run->msr.index == handler->msr) {
             if (handler->rdmsr) {
                 r = handler->rdmsr(cpu, handler->msr,
@@ -5275,10 +5273,10 @@ static int kvm_handle_rdmsr(X86CPU *cpu, struct kvm_run *run)
 static int kvm_handle_wrmsr(X86CPU *cpu, struct kvm_run *run)
 {
     int i;
-    bool r;
+    int r;
 
-    for (i = 0; i < ARRAY_SIZE(msr_handlers); i++) {
-        KVMMSRHandlers *handler = &msr_handlers[i];
+    for (i = 0; i < ARRAY_SIZE(cpu->parent_obj.kvm_state->msr_handlers); i++) {
+        KVMMSRHandlers *handler = &cpu->parent_obj.kvm_state->msr_handlers[i];
         if (run->msr.index == handler->msr) {
             if (handler->wrmsr) {
                 r = handler->wrmsr(cpu, handler->msr, run->msr.data);
