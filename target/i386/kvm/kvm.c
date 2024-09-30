@@ -157,7 +157,6 @@ static struct kvm_msr_list *kvm_feature_msrs;
 
 #define BUS_LOCK_SLICE_TIME 1000000000ULL /* ns */
 static RateLimit bus_lock_ratelimit_ctrl;
-static int kvm_get_one_msr(X86CPU *cpu, int index, uint64_t *value);
 
 bool kvm_has_smm(void)
 {
@@ -3014,7 +3013,7 @@ int kvm_put_one_msr(X86CPU *cpu, int index, uint64_t value)
     return kvm_vcpu_ioctl(CPU(cpu), KVM_SET_MSRS, cpu->kvm_msr_buf);
 }
 
-static int kvm_get_one_msr(X86CPU *cpu, int index, uint64_t *value)
+int kvm_get_one_msr(X86CPU *cpu, int index, uint64_t *value)
 {
     int ret;
     struct {
