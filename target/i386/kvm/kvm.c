@@ -2500,7 +2500,7 @@ static int kvm_get_supported_msrs(KVMState *s)
     return ret;
 }
 
-static bool kvm_rdmsr_core_thread_count(X86CPU *cpu, uint32_t msr,
+static int kvm_rdmsr_core_thread_count(X86CPU *cpu, uint32_t msr,
                                         uint64_t *val)
 {
     CPUState *cs = CPU(cpu);
@@ -5262,7 +5262,7 @@ static int kvm_handle_rdmsr(X86CPU *cpu, struct kvm_run *run)
                 r = handler->rdmsr(cpu, handler->msr,
                                    (uint64_t *)&run->msr.data);
                 run->msr.error = r ? 0 : 1;
-                return 0;
+                return (r > 1) ? r : 0;
             }
         }
     }
@@ -5281,7 +5281,7 @@ static int kvm_handle_wrmsr(X86CPU *cpu, struct kvm_run *run)
             if (handler->wrmsr) {
                 r = handler->wrmsr(cpu, handler->msr, run->msr.data);
                 run->msr.error = r ? 0 : 1;
-                return 0;
+                return (r > 1) ? r : 0;
             }
         }
     }
