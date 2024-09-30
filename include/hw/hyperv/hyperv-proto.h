@@ -591,6 +591,14 @@ struct hyperv_memory_intercept {
 	uint64_t r15;
 } __attribute__((packed));
 
+struct hv_msr_intercept {
+    struct hyperv_intercept_header header;
+    uint32_t msr_number;
+    uint32_t reserved0;
+    uint64_t rdx;
+    uint64_t rax;
+} __attribute__((packed));
+
 struct hv_send_ipi {
 	uint32_t vector;
 	union hv_input_vtl in_vtl;
