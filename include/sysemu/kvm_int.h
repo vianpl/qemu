@@ -70,6 +70,18 @@ struct KVMDirtyRingReaper {
     volatile uint64_t reaper_iteration; /* iteration number of reaper thr */
     volatile enum KVMDirtyRingReaperState reaper_state; /* reap thr state */
 };
+
+struct KVMRegisterHandler {
+    uint64_t reg;
+    int (*handler)(CPUState*, uint64_t, uint64_t);
+};
+
+// todo: read filters
+struct KVMRegisterHandlers {
+    struct KVMRegisterHandler *handlers;
+    size_t handler_count;
+};
+
 struct KVMState
 {
     AccelState parent_obj;
@@ -127,6 +139,7 @@ struct KVMState
     char *device;
 
     KVMMSRHandlers msr_handlers[KVM_MSR_FILTER_MAX_RANGES];
+    struct KVMRegisterHandlers register_handlers;
 };
 
 void kvm_memory_listener_register(KVMState *s, KVMMemoryListener *kml,

@@ -213,6 +213,8 @@ int kvm_on_sigbus(int code, void *addr);
 #ifdef NEED_CPU_H
 #include "cpu.h"
 
+int kvm_filter_register(KVMState *kvm, uint64_t reg, int (*handler)(CPUState*, uint64_t, uint64_t));
+
 void kvm_flush_coalesced_mmio_buffer(void);
 
 /**

@@ -2602,6 +2602,9 @@ static int kvm_init(MachineState *ms)
                             query_stats_schemas_cb);
     }
 
+    s->register_handlers.handlers = NULL;
+    s->register_handlers.handler_count = 0;
+
     return 0;
 
 err:
@@ -2707,6 +2710,60 @@ static int kvm_handle_internal_error(CPUState *cpu, struct kvm_run *run)
      * something went wrong.
      */
     return -1;
+}
+
+static int kvm_handle_register_read(CPUState *cpu, struct kvm_run *run) {
+    return 1;
+}
+
+static int kvm_handle_register_write(CPUState *cpu, struct kvm_run *run) {
+    KVMState *kvm = cpu->kvm_state;
+    for (uint64_t i = 0; i < kvm->register_handlers.handler_count; i++) {
+        if (kvm->register_handlers.handlers[i].reg == run->reg.reg) {
+            return kvm->register_handlers.handlers[i].handler(cpu, run->reg.reg, run->reg.data);
+        }
+    }
+    return 1;
+}
+
+int kvm_filter_register(KVMState *kvm, uint64_t reg, int (*handler)(CPUState *, uint64_t, uint64_t)) {
+    for (uint64_t i = 0; i < kvm->register_handlers.handler_count; i++) {
+        if (kvm->register_handlers.handlers[i].reg == reg)
+            return 0;
+    }
+
+
+    struct KVMRegisterHandler *handlers = g_realloc_n(kvm->register_handlers.handlers,
+                                                      pow2ceil(kvm->register_handlers.handler_count + 1),
+                                                      sizeof(struct KVMRegisterHandler));
+
+    if (handlers == NULL)
+        return 0;
+
+    handlers[kvm->register_handlers.handler_count].reg = reg;
+    handlers[kvm->register_handlers.handler_count].handler = handler;
+
+    kvm->register_handlers.handlers = handlers;
+    kvm->register_handlers.handler_count += 1;
+
+    __u64 *registers = (__u64 *) g_malloc_n(kvm->register_handlers.handler_count, sizeof(__u64));
+
+    for (uint64_t i = 0; i < kvm->register_handlers.handler_count; i++) {
+        registers[i] = kvm->register_handlers.handlers[i].reg;
+    }
+
+    struct kvm_register_filter filter = {
+            kvm->register_handlers.handler_count,
+            KVM_REG_WRITE,
+            {},
+            registers,
+    };
+
+    kvm_vm_ioctl(kvm, KVM_SET_REGISTER_FILTER, &filter);
+
+    g_free(registers);
+
+    return 1;
 }
 
 void kvm_flush_coalesced_mmio_buffer(void)
@@ -3026,6 +3083,12 @@ int kvm_cpu_exec(CPUState *cpu)
                 ret = kvm_arch_handle_exit(cpu, run);
                 break;
             }
+            break;
+        case KVM_EXIT_READ_REG:
+            ret = kvm_handle_register_read(cpu, run);
+            break;
+        case KVM_EXIT_WRITE_REG:
+            ret = kvm_handle_register_write(cpu, run);
             break;
         default:
             ret = kvm_arch_handle_exit(cpu, run);
