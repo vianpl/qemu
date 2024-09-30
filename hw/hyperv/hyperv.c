@@ -35,6 +35,7 @@
 #include "sysemu/cpus.h"
 #include "cpu.h"
 #include "trace.h"
+#include "asm-x86/kvm.h"
 
 struct SynICState {
     DeviceState parent_obj;
@@ -1305,6 +1306,255 @@ static int hyperv_deliver_intercept(CPUState *cs, struct hyperv_message *msg)
 	return 0;
 }
 
+static void hyperv_build_msr_intercept(CPUState *intercepted_cpu, struct hyperv_message *msg, uint8_t access_type,
+									   uint32_t msr)
+{
+	struct hv_msr_intercept *intercept = (struct hv_msr_intercept *) msg->payload;
+	X86CPU *cpu = X86_CPU(intercepted_cpu);
+	struct hv_x64_segment_register rhs;
+	CPUX86State *env = &cpu->env;
+
+	msg->header.message_type = HV_MESSAGE_X64_MSR_INTERCEPT;
+	msg->header.payload_size = sizeof(*intercept);
+
+	intercept->header.vp_index = hyperv_vp_index(intercepted_cpu);
+	intercept->header.instruction_length = intercepted_cpu->kvm_run->memory.exit_instruction_len;
+	intercept->header.access_type_mask = access_type;
+	hyperv_get_seg(&env->segs[R_CS], &rhs);
+	memcpy(&intercept->header.cs, &rhs, sizeof(intercept->header.cs));
+	intercept->header.exec_state.cr0_pe = (env->cr[0] & CR0_PE_MASK);
+	intercept->header.exec_state.cr0_am = (env->cr[0] & CR0_AM_MASK);
+	hyperv_get_seg(&env->segs[R_SS], &rhs);
+	intercept->header.exec_state.cpl = rhs.descriptor_privilege_level;
+	intercept->header.exec_state.efer_lma = !!(env->efer & MSR_EFER_LMA);
+	intercept->header.exec_state.debug_active = 0;
+	intercept->header.exec_state.interruption_pending = 0;
+	intercept->header.rip = env->eip;
+	intercept->header.rflags = env->eflags;
+
+	intercept->msr_number = msr;
+	intercept->rdx = env->regs[R_EDX];
+	intercept->rax = env->regs[R_EAX];
+}
+
+static int hyperv_vcpu_should_intercept_msr_read(X86CPU *cpu, uint32_t msr)
+{
+	switch (msr) {
+	case MSR_IA32_MISC_ENABLE:
+		return cpu->env.cr_intercept_control.ia32_misc_enable_read;
+	case MSR_LSTAR:
+		return cpu->env.cr_intercept_control.msr_lstar_read;
+	case MSR_STAR:
+		return cpu->env.cr_intercept_control.msr_star_read;
+	case MSR_CSTAR:
+		return cpu->env.cr_intercept_control.msr_cstar_read;
+	case MSR_IA32_APICBASE_BASE:
+		return cpu->env.cr_intercept_control.apic_base_msr_read;
+	case MSR_EFER:
+		return cpu->env.cr_intercept_control.msr_efer_read;
+	default:
+		return 0;
+	}
+}
+
+static int hyperv_vcpu_should_intercept_msr_write(X86CPU *cpu, uint32_t msr)
+{
+	switch (msr) {
+	case MSR_IA32_MISC_ENABLE:
+		return cpu->env.cr_intercept_control.ia32_misc_enable_write;
+	case MSR_LSTAR:
+		return cpu->env.cr_intercept_control.msr_lstar_write;
+	case MSR_STAR:
+		return cpu->env.cr_intercept_control.msr_star_write;
+	case MSR_CSTAR:
+		return cpu->env.cr_intercept_control.msr_cstar_write;
+	case MSR_IA32_APICBASE_BASE:
+		return cpu->env.cr_intercept_control.apic_base_msr_write;
+	case MSR_EFER:
+		return cpu->env.cr_intercept_control.msr_efer_write;
+	case MSR_IA32_SYSENTER_CS:
+		return cpu->env.cr_intercept_control.msr_sysenter_cs_write;
+	case MSR_IA32_SYSENTER_EIP:
+		return cpu->env.cr_intercept_control.msr_sysenter_eip_write;
+	case MSR_IA32_SYSENTER_ESP:
+		return cpu->env.cr_intercept_control.msr_sysenter_esp_write;
+	case MSR_FMASK:
+		return cpu->env.cr_intercept_control.msr_sfmask_write;
+	case MSR_TSC_AUX:
+		return cpu->env.cr_intercept_control.msr_tsc_aux_write;
+	case MSR_IA32_FEATURE_CONTROL:
+		return cpu->env.cr_intercept_control.msr_sgx_launch_control_write;
+	default:
+		return 0;
+	}
+}
+
+static const char *kvm_msr_to_str(uint32_t msr)
+{
+	switch (msr) {
+	case MSR_IA32_MISC_ENABLE:
+		return "'IA32 misc enable'";
+	case MSR_LSTAR:
+		return "'LSTAR'";
+	case MSR_STAR:
+		return "'STAR'";
+	case MSR_CSTAR:
+		return "'CSTAR'";
+	case MSR_IA32_APICBASE_BASE:
+		return "'APIC base'";
+	case MSR_EFER:
+		return "'EFER'";
+	case MSR_IA32_SYSENTER_CS:
+		return "'IA32 sysenter cs'";
+	case MSR_IA32_SYSENTER_EIP:
+		return "'IA32 sysenter eip'";
+	case MSR_IA32_SYSENTER_ESP:
+		return "'IA32 sysenter esp'";
+	case MSR_FMASK:
+		return "'FMASK'";
+	case MSR_TSC_AUX:
+		return "'TSC aux'";
+	case MSR_IA32_FEATURE_CONTROL:
+		return "'IA32 feature control'";
+	default:
+		return "??";
+	}
+}
+
+static int hyperv_intercept_msr_read(X86CPU *cpu, uint32_t msr, uint64_t *val)
+{
+	struct hyperv_message msg = {0};
+	CPUState *cs = CPU(cpu);
+
+	if (get_active_vtl(cs) == HV_NUM_VTLS-1) {
+		goto emulate;
+	}
+
+	if (!hyperv_vcpu_should_intercept_msr_read(X86_CPU(hyperv_get_next_vtl(cs)), msr)) {
+		goto emulate;
+	}
+
+	cs->stop = true;
+	cpu_synchronize_state(cs);
+	hyperv_build_msr_intercept(cs, &msg, HV_INTERCEPT_ACCESS_READ, msr);
+	hyperv_deliver_intercept(hyperv_get_next_vtl(cs), &msg);
+
+	return EXCP_HALTED;
+
+	emulate:
+	kvm_get_one_msr(cpu, msr, val);
+	return 1;
+}
+
+static int hyperv_intercept_msr_write(X86CPU *cpu, uint32_t msr, uint64_t val)
+{
+	struct hyperv_message msg = {0};
+	CPUState *cs = CPU(cpu);
+
+	if (get_active_vtl(cs) == HV_NUM_VTLS-1) {
+		goto emulate;
+	}
+
+	if (!hyperv_vcpu_should_intercept_msr_write(X86_CPU(hyperv_get_next_vtl(cs)), msr)) {
+		goto emulate;
+	}
+
+	if (msr == MSR_IA32_MISC_ENABLE) {
+		uint64_t cur = 0;
+		kvm_get_one_msr(cpu, msr, &cur);
+		if (!((val ^ cur) & cpu->env.ia32_misc_enable_intercept_mask))
+			goto emulate;
+	}
+
+	cs->stop = true;
+	cpu_synchronize_state(cs);
+	hyperv_build_msr_intercept(cs, &msg, HV_INTERCEPT_ACCESS_WRITE, msr);
+	hyperv_deliver_intercept(hyperv_get_next_vtl(cs), &msg);
+
+	return EXCP_HALTED;
+
+	emulate:
+	kvm_put_one_msr(cpu, msr, val);
+	return 1;
+}
+
+static int hyperv_intercept_sgx_launch_control(X86CPU *cpu, uint32_t msr, uint64_t val)
+{
+	if (msr != MSR_IA32_FEATURE_CONTROL) {
+		printf("In %s with MSR %x\n", __func__, msr);
+		return false;
+	}
+
+	/* SGX launch control is a single bit at index 17 in the IA32 feature control MSR */
+	if (((val ^ cpu->env.msr_ia32_feature_control) >> 17) & 1)
+		return hyperv_intercept_msr_write(cpu, msr, val);
+
+	return true;
+}
+
+static void hyperv_kvm_setup_filters(KVMState *kvm)
+{
+	kvm_filter_msr(kvm,
+				   MSR_IA32_MISC_ENABLE,
+				   hyperv_intercept_msr_read,
+				   hyperv_intercept_msr_write);
+
+	kvm_filter_msr(kvm,
+				   MSR_LSTAR,
+				   hyperv_intercept_msr_read,
+				   hyperv_intercept_msr_write);
+
+	kvm_filter_msr(kvm,
+				   MSR_STAR,
+				   hyperv_intercept_msr_read,
+				   hyperv_intercept_msr_write);
+
+	kvm_filter_msr(kvm,
+				   MSR_CSTAR,
+				   hyperv_intercept_msr_read,
+				   hyperv_intercept_msr_write);
+
+	kvm_filter_msr(kvm,
+				   MSR_IA32_APICBASE_BASE,
+				   hyperv_intercept_msr_read,
+				   hyperv_intercept_msr_write);
+
+	kvm_filter_msr(kvm,
+				   MSR_EFER,
+				   hyperv_intercept_msr_read,
+				   hyperv_intercept_msr_write);
+
+	kvm_filter_msr(kvm,
+				   MSR_IA32_SYSENTER_CS,
+				   NULL,
+				   hyperv_intercept_msr_write);
+
+	kvm_filter_msr(kvm,
+				   MSR_IA32_SYSENTER_EIP,
+				   NULL,
+				   hyperv_intercept_msr_write);
+
+	kvm_filter_msr(kvm,
+				   MSR_IA32_SYSENTER_ESP,
+				   NULL,
+				   hyperv_intercept_msr_write);
+
+	kvm_filter_msr(kvm,
+				   MSR_FMASK,
+				   NULL,
+				   hyperv_intercept_msr_write);
+
+	kvm_filter_msr(kvm,
+				   MSR_TSC_AUX,
+				   NULL,
+				   hyperv_intercept_msr_write);
+
+	kvm_filter_msr(kvm,
+				   MSR_IA32_FEATURE_CONTROL,
+				   NULL,
+				   hyperv_intercept_sgx_launch_control);
+}
+
 static int hyperv_kvm_init_vsm(int vtl)
 {
     MachineState *ms = MACHINE(qdev_get_machine());
@@ -1403,6 +1653,8 @@ uint16_t hyperv_hcall_vtl_enable_partition_vtl(CPUState *cs, uint64_t param1,
     /* Create new KVM VM */
     if (hyperv_kvm_init_vsm(input.target_vtl))
         return HV_STATUS_INVALID_PARAMETER;
+
+    hyperv_kvm_setup_filters(hv_vsm.s[0]);
 
     if (!hv_vsm.prots[0])
         hv_vsm.prots[0] = g_hash_table_new(g_direct_hash, g_direct_equal);
