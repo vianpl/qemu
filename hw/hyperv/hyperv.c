@@ -1350,6 +1350,7 @@ static void hyperv_build_reg_intercept(CPUState *intercepted_cpu, struct hyperv_
 	intercept->header.exec_state.efer_lma = !!(env->efer & MSR_EFER_LMA);
 	intercept->header.exec_state.debug_active = 0;
 	intercept->header.exec_state.interruption_pending = 0;
+	intercept->header.exec_state.vtl = get_active_vtl(intercepted_cpu);
 	intercept->header.rip = env->eip;
 	intercept->header.rflags = env->eflags;
 
@@ -1381,6 +1382,7 @@ static void hyperv_build_msr_intercept(CPUState *intercepted_cpu, struct hyperv_
 	intercept->header.exec_state.efer_lma = !!(env->efer & MSR_EFER_LMA);
 	intercept->header.exec_state.debug_active = 0;
 	intercept->header.exec_state.interruption_pending = 0;
+	intercept->header.exec_state.vtl = get_active_vtl(intercepted_cpu);
 	intercept->header.rip = env->eip;
 	intercept->header.rflags = env->eflags;
 
@@ -2774,6 +2776,7 @@ static void hyperv_build_memory_intercept(CPUState *intercepted_cpu,
 	intercept->header.exec_state.efer_lma = !!(env->efer & MSR_EFER_LMA);
 	intercept->header.exec_state.debug_active = 0;
 	intercept->header.exec_state.interruption_pending = 0;
+	intercept->header.exec_state.vtl = get_active_vtl(intercepted_cpu);
 	intercept->header.rip = env->eip;
 	intercept->header.rflags = env->eflags;
 
