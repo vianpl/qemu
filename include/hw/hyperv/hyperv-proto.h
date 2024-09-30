@@ -591,6 +591,15 @@ struct hyperv_memory_intercept {
 	uint64_t r15;
 } __attribute__((packed));
 
+struct hv_reg_intercept {
+    struct hyperv_intercept_header header;
+    uint8_t is_memory_op;
+    uint8_t reserved_0;
+    uint16_t reserved_1;
+    uint32_t reg_name;
+    uint64_t value;
+};
+
 struct hv_msr_intercept {
     struct hyperv_intercept_header header;
     uint32_t msr_number;
