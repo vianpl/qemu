@@ -91,6 +91,7 @@
 #define HV_MESSAGE_X64_EXCEPTION_INTERCEPT    0x80010003
 #define HV_MESSAGE_X64_APIC_EOI               0x80010004
 #define HV_MESSAGE_X64_LEGACY_FP_ERROR        0x80010005
+#define HV_MESSAGE_X64_REGISTER_INTERCEPT     0x80010006
 
 /*
  * Message flags
@@ -599,7 +600,7 @@ struct hv_reg_intercept {
     uint8_t reserved_0;
     uint16_t reserved_1;
     uint32_t reg_name;
-    uint64_t value;
+    uint64_t value[2];
 };
 
 struct hv_msr_intercept {

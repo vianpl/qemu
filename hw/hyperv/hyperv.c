@@ -1321,6 +1321,7 @@ static uint32_t kvm_register_to_hv_register(uint64_t reg) {
 	case KVM_X86_REG_GDT:
 		return HV_X64_REGISTER_GDTR;
 	case KVM_X86_REG_IDT:
+        printf("IDT\n");
 		return HV_X64_REGISTER_IDTR;
 	default:
 		return -1;
@@ -1328,18 +1329,19 @@ static uint32_t kvm_register_to_hv_register(uint64_t reg) {
 }
 
 static void hyperv_build_reg_intercept(CPUState *intercepted_cpu, struct hyperv_message *msg, uint8_t access_type,
-									   uint32_t reg, uint64_t value)
+									   uint64_t reg, uint64_t value)
 {
 	struct hv_reg_intercept *intercept = (struct hv_reg_intercept *) msg->payload;
 	X86CPU *cpu = X86_CPU(intercepted_cpu);
 	struct hv_x64_segment_register rhs;
 	CPUX86State *env = &cpu->env;
 
-	msg->header.message_type = HV_MESSAGE_X64_MSR_INTERCEPT;
+    printf("reg intercept reg %lx, idt reg %llx, val %lx, payload %lu\n", reg, KVM_X86_REG_IDT, value, sizeof(*intercept));
+	msg->header.message_type = HV_MESSAGE_X64_REGISTER_INTERCEPT;
 	msg->header.payload_size = sizeof(*intercept);
 
 	intercept->header.vp_index = hyperv_vp_index(intercepted_cpu);
-	intercept->header.instruction_length = intercepted_cpu->kvm_run->memory.exit_instruction_len;
+	intercept->header.instruction_length = 2;
 	intercept->header.access_type_mask = access_type;
 	hyperv_get_seg(&env->segs[R_CS], &rhs);
 	memcpy(&intercept->header.cs, &rhs, sizeof(intercept->header.cs));
@@ -1356,7 +1358,8 @@ static void hyperv_build_reg_intercept(CPUState *intercepted_cpu, struct hyperv_
 
 	intercept->is_memory_op = false;
 	intercept->reg_name = kvm_register_to_hv_register(reg);
-	intercept->value = value;
+	intercept->value[0] = value;
+	intercept->value[1] = value;
 }
 
 static void hyperv_build_msr_intercept(CPUState *intercepted_cpu, struct hyperv_message *msg, uint8_t access_type,

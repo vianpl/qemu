@@ -2293,7 +2293,7 @@ struct kvm_hyperv_tlb_flush_inhibit {
 	__u8  reserved[5];
 };
 
-#define KVM_SET_REGISTER_FILTER	_IOW(KVMIO,  0xd7, struct kvm_register_filter)
+#define KVM_SET_REGISTER_FILTER	_IOW(KVMIO,  0xf7, struct kvm_register_filter)
 
 struct kvm_register_filter {
     __u64 nmregs;
