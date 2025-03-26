@@ -925,7 +925,7 @@ static void hyperv_set_vtl_cpu_state(CPUState *cs, struct hv_init_vp_context *c,
         hyperv_apic_force_enable_spiv(cs);
 }
 
-static void hyperv_save_priv_vtl_state(CPUState *cs)
+static __attribute__((unused)) void hyperv_save_priv_vtl_state(CPUState *cs)
 {
     X86CPU *cpu = X86_CPU(cs);
     CPUX86State *env = &cpu->env;
@@ -1008,7 +1008,7 @@ static void hyperv_save_priv_vtl_state(CPUState *cs)
     priv_state->hflags2 = env->hflags2;
 }
 
-static void hyperv_restore_priv_vtl_state(CPUState *cs)
+static __attribute__((unused)) void hyperv_restore_priv_vtl_state(CPUState *cs)
 {
     X86CPU *cpu = X86_CPU(cs);
     CPUX86State *env = &cpu->env;
@@ -1555,6 +1555,68 @@ uint16_t hyperv_hcall_vtl_enable_vp_vtl(CPUState *cs, uint64_t param, bool fast)
     return HV_STATUS_SUCCESS;
 }
 
+static void hyperv_vtl_copy_shared_state(CPUState *prev, CPUState *next)
+{
+    CPUX86State *prev_env = &X86_CPU(prev)->env;
+    CPUX86State *next_env = &X86_CPU(next)->env;
+    uint64_t val;
+
+    next_env->regs[R_EAX] = prev_env->regs[R_EAX];
+    next_env->regs[R_EBX] = prev_env->regs[R_EBX];
+    next_env->regs[R_ECX] = prev_env->regs[R_ECX];
+    next_env->regs[R_EDX] = prev_env->regs[R_EDX];
+    next_env->regs[R_ESI] = prev_env->regs[R_ESI];
+    next_env->regs[R_EDI] = prev_env->regs[R_EDI];
+    next_env->regs[R_EBP] = prev_env->regs[R_EBP];
+    next_env->regs[R_R8] = prev_env->regs[R_R8];
+    next_env->regs[R_R9] = prev_env->regs[R_R9];
+    next_env->regs[R_R10] = prev_env->regs[R_R10];
+    next_env->regs[R_R11] = prev_env->regs[R_R11];
+    next_env->regs[R_R12] = prev_env->regs[R_R12];
+    next_env->regs[R_R13] = prev_env->regs[R_R13];
+    next_env->regs[R_R14] = prev_env->regs[R_R14];
+    next_env->regs[R_R15] = prev_env->regs[R_R15];
+    next_env->dr[0] = prev_env->dr[0];
+    next_env->dr[1] = prev_env->dr[1];
+    next_env->dr[2] = prev_env->dr[2];
+    next_env->dr[3] = prev_env->dr[3];
+    next_env->dr[4] = prev_env->dr[4];
+    next_env->dr[5] = prev_env->dr[5];
+    next_env->cr[2] = prev_env->cr[2];
+    next_env->xcr0 = prev_env->xcr0;
+    memcpy(next_env->mtrr_fixed, prev_env->mtrr_fixed,
+           sizeof(next_env->mtrr_fixed));
+    next_env->mtrr_deftype = prev_env->mtrr_deftype;
+    memcpy(next_env->mtrr_var, prev_env->mtrr_var, sizeof(next_env->mtrr_var));
+    next_env->mcg_cap = prev_env->mcg_cap;
+    next_env->mcg_status = prev_env->mcg_status;
+
+    next_env->msr_hv_tsc = prev_env->msr_hv_tsc;
+    next_env->msr_hv_runtime = prev_env->msr_hv_runtime;
+
+    /* Force BSP bit in vCPU 0 */
+    if (!hyperv_vp_index(next)) {
+        val = cpu_get_apic_base(X86_CPU(next)->apic_state);
+        val |= MSR_IA32_APICBASE_BSP;
+        cpu_set_apic_base(X86_CPU(next)->apic_state, val);
+    }
+
+
+    memcpy(next_env->xmm_regs, prev_env->xmm_regs, sizeof(prev_env->xmm_regs));
+    next_env->fpop = prev_env->fpop;
+    next_env->fpcs = prev_env->fpcs;
+    next_env->fpds = prev_env->fpds;
+    next_env->fpip = prev_env->fpip;
+    next_env->fpdp = prev_env->fpdp;
+    next_env->fpstt = prev_env->fpstt;
+    next_env->fpus = prev_env->fpus;
+    next_env->fpuc = prev_env->fpuc;
+    memcpy(next_env->fptags, prev_env->fptags, sizeof(next_env->fptags));
+    memcpy(next_env->fpregs, prev_env->fpregs, sizeof(next_env->fpregs));
+    next_env->mxcsr = prev_env->mxcsr;
+    next_env->xstate_bv = prev_env->xstate_bv;
+}
+
 #define VTL_INTERRUPT_PENDING   BIT(0)
 #define VTL_CALL_PENDING        BIT(1)
 
@@ -1562,7 +1624,7 @@ static void do_vtl1_entry(CPUState *vtl1, run_on_cpu_data arg)
 {
     CPUX86State *vtl1_env = &X86_CPU(vtl1)->env;
     CPUState *vtl0 = hyperv_get_prev_vtl(vtl1);
-    CPUX86State *vtl0_env = &X86_CPU(vtl0)->env;
+    /* CPUX86State *vtl0_env = &X86_CPU(vtl0)->env;*/
     VpVsmState *vpvsm = get_vp_vsm(vtl1);
 
     trace_hyperv_hcall_vtl_entry(hyperv_vp_index(vtl0), get_active_vtl(vtl0),
@@ -1570,9 +1632,10 @@ static void do_vtl1_entry(CPUState *vtl1, run_on_cpu_data arg)
 
     /* Poll updated RIP */
     cpu_synchronize_state(vtl1);
-    hyperv_save_priv_vtl_state(vtl1);
-    memcpy(vtl1_env, vtl0_env, sizeof(*vtl1_env));
-    hyperv_restore_priv_vtl_state(vtl1);
+    /* hyperv_save_priv_vtl_state(vtl1); */
+    /* memcpy(vtl1_env, vtl0_env, sizeof(*vtl1_env)); */
+    /* hyperv_restore_priv_vtl_state(vtl1); */
+    hyperv_vtl_copy_shared_state(vtl0, vtl1);
     set_vtl_entry_reason(vtl0, vtl1, qatomic_read(&vpvsm->vtl_event_state) & VTL_CALL_PENDING ?
                          HV_VTL_ENTRY_VTL_CALL : HV_VTL_ENTRY_INTERRUPT);
     vtl1_env->mp_state = KVM_MP_STATE_RUNNABLE;
@@ -1614,16 +1677,17 @@ static void do_vtl1_poll(CPUState *vtl1, run_on_cpu_data arg)
 
 static void do_vtl0_downcall(CPUState *vtl0, run_on_cpu_data arg)
 {
-    CPUX86State *vtl0_env = &X86_CPU(vtl0)->env;
+    /* CPUX86State *vtl0_env = &X86_CPU(vtl0)->env; */
     CPUState *vtl1 = hyperv_get_next_vtl(vtl0);
-    CPUX86State *vtl1_env = &X86_CPU(vtl1)->env;
+    /* CPUX86State *vtl1_env = &X86_CPU(vtl1)->env; */
     VpVsmState *vpvsm = get_vp_vsm(vtl1);
 
     trace_hyperv_hcall_vtl_downcall(hyperv_vp_index(vtl0), get_active_vtl(vtl0));
 
-    hyperv_save_priv_vtl_state(vtl0);
-    memcpy(vtl0_env, vtl1_env, sizeof(*vtl1_env));
-    hyperv_restore_priv_vtl_state(vtl0);
+    /* hyperv_save_priv_vtl_state(vtl0); */
+    /* memcpy(vtl0_env, vtl1_env, sizeof(*vtl1_env)); */
+    /* hyperv_restore_priv_vtl_state(vtl0); */
+    hyperv_vtl_copy_shared_state(vtl1, vtl0);
     restore_regs_from_vtl_control(vtl1, vtl0);
     cpu_synchronize_post_reset(vtl0);
     vpvsm->vtl_event_handled = false;
