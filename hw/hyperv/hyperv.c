@@ -1315,34 +1315,52 @@ static int hyperv_kvm_init_vsm(int vtl)
 uint16_t hyperv_hcall_vtl_enable_partition_vtl(CPUState *cs, uint64_t param1,
                                                uint64_t param2, bool fast)
 {
-    union hv_enable_partition_vtl input;
+    union hv_enable_partition_vtl *input;
     uint8_t highest_enabled_vtl;
+    hwaddr len;
+    uint16_t ret;
 
     // TODO: Implement not fast args
     if (!fast)
         return HV_STATUS_INVALID_HYPERCALL_CODE;
 
-    input.as_u64[0] = param1;
-    input.as_u64[1] = param2;
+    if (param1 & (__alignof__(*input) - 1)) {
+        return HV_STATUS_INVALID_ALIGNMENT;
+    }
+
+    len = sizeof(*input);
+    input = cpu_physical_memory_map(param1, &len, 0);
+    if (len < sizeof(*input)) {
+        ret = HV_STATUS_INSUFFICIENT_MEMORY;
+        goto unmap;
+    }
 
     trace_hyperv_hcall_vtl_enable_partition_vtl(
-        input.target_partition_id, input.target_vtl, input.flags.as_u8);
+        input->target_partition_id, input->target_vtl, input->flags.as_u8);
 
     /* Only self-targeting is supported */
-    if (input.target_partition_id != HV_PARTITION_ID_SELF)
-        return HV_STATUS_INVALID_PARTITION_ID;
+    if (input->target_partition_id != HV_PARTITION_ID_SELF) {
+        ret = HV_STATUS_INVALID_PARTITION_ID;
+        goto unmap;
+    }
 
     /* We don't declare MBEC support */
-    if (input.flags.enable_mbec != 0)
-        return HV_STATUS_INVALID_PARAMETER;
+    if (input->flags.enable_mbec != 0) {
+        ret = HV_STATUS_INVALID_PARAMETER;
+        goto unmap;
+    }
 
     /* Check that target VTL is sane */
-    if (input.target_vtl > hv_vsm_partition_status.maximum_vtl)
-        return HV_STATUS_INVALID_PARAMETER;
+    if (input->target_vtl > hv_vsm_partition_status.maximum_vtl) {
+        ret = HV_STATUS_INVALID_PARAMETER;
+        goto unmap;
+    }
 
     /* Is target VTL already enabled? */
-    if (hv_vsm_partition_status.enabled_vtl_set & (1ul << input.target_vtl))
-        return HV_STATUS_INVALID_PARAMETER;
+    if (hv_vsm_partition_status.enabled_vtl_set & (1ul << input->target_vtl)) {
+        ret = HV_STATUS_INVALID_PARAMETER;
+        goto unmap;
+    }
 
     /*
     * Requestor VP should be running on VTL higher or equal to the new one or
@@ -1350,22 +1368,30 @@ uint16_t hyperv_hcall_vtl_enable_partition_vtl(CPUState *cs, uint64_t param1,
     * than that
     */
     highest_enabled_vtl = fls(hv_vsm_partition_status.enabled_vtl_set) - 1;
-    if (get_active_vtl(cs) < input.target_vtl &&
-        get_active_vtl(cs) != highest_enabled_vtl)
-      return HV_STATUS_INVALID_PARAMETER;
+    if (get_active_vtl(cs) < input->target_vtl &&
+        get_active_vtl(cs) != highest_enabled_vtl) {
+        ret = HV_STATUS_INVALID_PARAMETER;
+        goto unmap;
+    }
 
     if (!get_active_vtl(cs))
         hv_vsm.s[0] = cs->kvm_state;
 
     /* Create new KVM VM */
-    if (hyperv_kvm_init_vsm(input.target_vtl))
-        return HV_STATUS_INVALID_PARAMETER;
+    if (hyperv_kvm_init_vsm(input->target_vtl)) {
+        ret = HV_STATUS_INVALID_PARAMETER;
+        goto unmap;
+    }
 
     if (!hv_vsm.prots[0])
         hv_vsm.prots[0] = g_hash_table_new(g_direct_hash, g_direct_equal);
 
-    hv_vsm_partition_status.enabled_vtl_set |= (1ul << input.target_vtl);
-    return HV_STATUS_SUCCESS;
+    hv_vsm_partition_status.enabled_vtl_set |= (1ul << input->target_vtl);
+    ret = HV_STATUS_SUCCESS;
+
+unmap:
+    cpu_physical_memory_unmap(input, len, 0, 0);
+    return ret;
 }
 
 static CPUState* hyperv_init_vtl_vcpu(int32_t vp_index, unsigned int vtl)
