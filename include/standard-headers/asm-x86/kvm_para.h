@@ -36,6 +36,7 @@
 #define KVM_FEATURE_MSI_EXT_DEST_ID	15
 #define KVM_FEATURE_HC_MAP_GPA_RANGE	16
 #define KVM_FEATURE_MIGRATION_CONTROL	17
+#define KVM_FEATURE_GUEST_HINTS	18
 
 #define KVM_HINTS_REALTIME      0
 
@@ -149,5 +150,23 @@ struct kvm_vcpu_pv_apf_data {
 #define KVM_PV_EOI_MASK (0x1 << KVM_PV_EOI_BIT)
 #define KVM_PV_EOI_ENABLED KVM_PV_EOI_MASK
 #define KVM_PV_EOI_DISABLED 0x0
+
+/* KVM_HC_GUEST_HINT */
+#define KVM_HC_GUEST_HINT		13
+
+#define KVM_HINT_QUERY			0
+#define KVM_HINT_LOW_LATENCY_VCPU	1
+
+struct kvm_hint_query_response {
+	uint32_t flags;
+	uint32_t nr_types;
+	uint64_t bitmap[];
+};
+
+struct kvm_hint_low_latency_vcpu {
+	uint32_t flags;
+	uint32_t nr_vcpus;
+	uint64_t bitmap[];
+};
 
 #endif /* _ASM_X86_KVM_PARA_H */
