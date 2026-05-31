@@ -1737,6 +1737,17 @@ int kvm_arch_init_vcpu(CPUState *cs)
 
     has_xsave2 = kvm_check_extension(cs->kvm_state, KVM_CAP_XSAVE2);
 
+    if (cs == first_cpu &&
+        (env->features[FEAT_KVM] & (1 << KVM_FEATURE_GUEST_HINTS))) {
+        r = kvm_vm_enable_cap(cs->kvm_state, KVM_CAP_EXIT_HYPERCALL, 0,
+                              1ULL << KVM_HC_GUEST_HINT);
+        if (r < 0) {
+            error_report("kvm: Failed to enable KVM_CAP_EXIT_HYPERCALL "
+                         "for KVM_HC_GUEST_HINT: %s", strerror(-r));
+            return r;
+        }
+    }
+
     r = kvm_arch_set_tsc_khz(cs);
     if (r < 0) {
         return r;
@@ -5269,6 +5280,78 @@ static bool host_supports_vmx(void)
 
 #define VMX_INVALID_GUEST_STATE 0x80000021
 
+static int kvm_handle_guest_hint(X86CPU *cpu, struct kvm_run *run)
+{
+    uint64_t type = run->hypercall.args[0];
+    uint64_t gpa  = run->hypercall.args[1];
+    uint64_t len  = run->hypercall.args[2];
+
+    if (run->hypercall.nr != KVM_HC_GUEST_HINT) {
+        run->hypercall.ret = -EINVAL;
+        return 0;
+    }
+
+    switch (type) {
+    case KVM_HINT_QUERY: {
+        struct {
+            uint32_t flags;
+            uint32_t nr_types;
+            uint64_t bitmap[1];
+        } resp = {
+            .flags    = 0,
+            .nr_types = 64,
+            .bitmap   = { (1ULL << KVM_HINT_QUERY) |
+                          (1ULL << KVM_HINT_LOW_LATENCY_VCPU) },
+        };
+
+        if (len < sizeof(resp)) {
+            run->hypercall.ret = -EINVAL;
+            break;
+        }
+        cpu_physical_memory_write(gpa, &resp, sizeof(resp));
+        run->hypercall.ret = 0;
+        break;
+    }
+    case KVM_HINT_LOW_LATENCY_VCPU: {
+        struct kvm_hint_low_latency_vcpu hdr;
+        unsigned int words, i;
+        uint64_t *bitmap;
+
+        if (len < sizeof(hdr)) {
+            run->hypercall.ret = -EINVAL;
+            break;
+        }
+        cpu_physical_memory_read(gpa, &hdr, sizeof(hdr));
+        words = (hdr.nr_vcpus + 63) / 64;
+        if (len - sizeof(hdr) < (uint64_t)words * sizeof(uint64_t)) {
+            run->hypercall.ret = -EINVAL;
+            break;
+        }
+        bitmap = g_malloc(words * sizeof(uint64_t));
+        cpu_physical_memory_read(gpa + sizeof(hdr), bitmap,
+                                 words * sizeof(uint64_t));
+
+        fprintf(stderr, "kvm: guest hint LOW_LATENCY_VCPU "
+                "flags=0x%x nr_vcpus=%u bitmap=",
+                hdr.flags, hdr.nr_vcpus);
+        for (i = 0; i < words; i++) {
+            fprintf(stderr, "%s%016" PRIx64,
+                    i ? "," : "", bitmap[i]);
+        }
+        fprintf(stderr, "\n");
+
+        g_free(bitmap);
+        run->hypercall.ret = 0;
+        break;
+    }
+    default:
+        run->hypercall.ret = -EINVAL;
+        break;
+    }
+
+    return 0;
+}
+
 int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
 {
     X86CPU *cpu = X86_CPU(cs);
@@ -5362,6 +5445,9 @@ int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
         ret = kvm_xen_handle_exit(cpu, &run->xen);
         break;
 #endif
+    case KVM_EXIT_HYPERCALL:
+        ret = kvm_handle_guest_hint(cpu, run);
+        break;
     default:
         fprintf(stderr, "KVM: unknown exit reason %d\n", run->exit_reason);
         ret = -1;
